@@ -1,0 +1,13 @@
+{
+  "name": "arbitrage-app",
+  "private": true,
+  "scripts": {
+    "compile": "npx hardhat compile"
+  },
+  "devDependencies": {
+    "hardhat": "^2.16.0",
+    "@nomiclabs/hardhat-ethers": "^2.0.6",
+    "ethers": "^6.0.0",
+    "typescript": "^5.0.0"
+  }
+}
