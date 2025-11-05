@@ -1,2 +1,18 @@
 
-frontend/.env
+# Dependencies
+/node_modules
+/frontend/node_modules
+
+# Env files
+.env
+*.env
+
+# Build output
+/frontend/build
+/frontend/dist
+
+# Logs
+firebase-debug.log
+
+# IDE files
+.idx

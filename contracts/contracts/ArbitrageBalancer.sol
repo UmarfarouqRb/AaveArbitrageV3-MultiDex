@@ -27,6 +27,7 @@ contract ArbitrageBalancer is ReentrancyGuard {
         vault = IVault(_vault);
     }
 
+    // It is recommended to implement a TWAP oracle to protect against flash loan price manipulation.
     function startFlashloan(address token, uint256 amount, bytes calldata userData) external onlyOwner {
         address[] memory tokens = new address[](1);
         tokens[0] = token;
@@ -50,9 +51,12 @@ contract ArbitrageBalancer is ReentrancyGuard {
             address outputToken,
             address[] memory routers,
             address[][] memory paths,
-            uint256 minOutsSecondSwap,
-            uint256 minTwap
-        ) = abi.decode(userData, (address, address, address, address[], address[][], uint256, uint256));
+            uint256 minProfit
+        ) = abi.decode(userData, (address, address, address, address[], address[][], uint256));
+
+        require(inputToken != address(0) && middleToken != address(0) && outputToken != address(0), "Invalid token address");
+        require(routers.length == 2 && paths.length == 2, "Invalid router or path length");
+        require(routers[0] != address(0) && routers[1] != address(0), "Invalid router address");
 
         address loanToken = tokens[0];
         uint256 loanAmount = amounts[0];
@@ -66,16 +70,18 @@ contract ArbitrageBalancer is ReentrancyGuard {
             1, // Minimal amount out for the first swap
             paths[0],
             address(this),
-            block.timestamp 
+            block.timestamp
         );
 
         // 2. Second Swap
         uint amountFromFirstSwap = amountsOut1[amountsOut1.length - 1];
         IERC20(middleToken).approve(routers[1], amountFromFirstSwap);
+
+        uint minAmountOut = totalRepayment + minProfit;
         
         uint[] memory amountsOut2 = IUniswapV2Router(routers[1]).swapExactTokensForTokens(
             amountFromFirstSwap,
-            totalRepayment,
+            minAmountOut,
             paths[1],
             address(this),
             block.timestamp
