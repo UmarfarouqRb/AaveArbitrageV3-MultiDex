@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 
 const ArbitrageOpportunities = () => {
   const [opportunities, setOpportunities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const containerRef = useRef(null);
+  const [containerWidth, setContainerWidth] = useState(0);
 
   const fetchAndRankOpportunities = async () => {
     setLoading(true);
@@ -59,9 +61,24 @@ const ArbitrageOpportunities = () => {
   };
 
   useEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      if(entries[0]) {
+        setContainerWidth(entries[0].contentRect.width);
+      }
+    });
+    if(containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
     fetchAndRankOpportunities();
     const intervalId = setInterval(fetchAndRankOpportunities, 600000); // Refresh every 10 minutes
-    return () => clearInterval(intervalId);
+
+    return () => {
+      if(containerRef.current) {
+        observer.unobserve(containerRef.current);
+      }
+      clearInterval(intervalId);
+    };
   }, []);
 
   const copyToClipboard = (text) => {
@@ -71,9 +88,73 @@ const ArbitrageOpportunities = () => {
       console.error('Could not copy text: ', err);
     });
   };
+  
+  const isSmallScreen = containerWidth < 480;
+
+  const styles = {
+      container: { marginTop: '30px', padding: '15px', backgroundColor: '#f4f6f8', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' },
+      header: { 
+          color: '#2c3e50', 
+          textAlign: 'center', 
+          marginBottom: '20px',
+          fontSize: isSmallScreen ? '1.2em' : '1.5em' 
+      },
+      grid: { 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
+          gap: '15px' 
+      },
+      card: { 
+          backgroundColor: '#ffffff', 
+          border: '1px solid #e1e5eb', 
+          borderRadius: '8px', 
+          padding: '12px', 
+          boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+          fontSize: isSmallScreen ? '0.85em' : '1em'
+      },
+      cardHeader: { 
+          marginTop: 0, 
+          marginBottom: '8px', 
+          color: '#34495e', 
+          borderBottom: '1px solid #f0f0f0', 
+          paddingBottom: '8px',
+          fontSize: '1.1em'
+      },
+      tokenContract: { 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between', 
+          marginBottom: '12px', 
+          fontSize: '0.7em',
+          wordBreak: 'break-all'
+      },
+      copyButton: { 
+          marginLeft: '8px', 
+          padding: '3px 7px', 
+          fontSize: '0.8em', 
+          cursor: 'pointer', 
+          border: '1px solid #bdc3c7', 
+          borderRadius: '4px', 
+          backgroundColor: '#f8f9fa'
+      },
+      opportunityDetails: { 
+          paddingTop: '12px', 
+          marginBottom: '12px' 
+      },
+      buyText: { color: '#27ae60', margin: '4px 0', fontSize: '0.95em' },
+      sellText: { color: '#c0392b', margin: '4px 0', fontSize: '0.95em' },
+      arbitrageInfo: { 
+          backgroundColor: '#ecf0f1', 
+          padding: '8px', 
+          borderRadius: '4px', 
+          fontSize: '0.9em', 
+          textAlign: 'center', 
+          marginTop: 'auto' 
+      },
+  };
 
   return (
-    <div style={styles.container}>
+    <div ref={containerRef} style={styles.container}>
       <h2 style={styles.header}>Top 10 Arbitrage Opportunities</h2>
       {loading ? (
         <p style={{textAlign: 'center'}}>Finding the best opportunities...</p>
@@ -100,71 +181,6 @@ const ArbitrageOpportunities = () => {
       )}
     </div>
   );
-};
-
-// Use a media query for responsive design
-const screenWidth = window.innerWidth;
-
-const styles = {
-    container: { marginTop: '30px', padding: '15px', backgroundColor: '#f4f6f8', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' },
-    header: { 
-        color: '#2c3e50', 
-        textAlign: 'center', 
-        marginBottom: '20px',
-        fontSize: screenWidth < 480 ? '1.2em' : '1.5em' 
-    },
-    grid: { 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
-        gap: '15px' 
-    },
-    card: { 
-        backgroundColor: '#ffffff', 
-        border: '1px solid #e1e5eb', 
-        borderRadius: '8px', 
-        padding: '12px', 
-        boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-        fontSize: screenWidth < 480 ? '0.85em' : '1em'
-    },
-    cardHeader: { 
-        marginTop: 0, 
-        marginBottom: '8px', 
-        color: '#34495e', 
-        borderBottom: '1px solid #f0f0f0', 
-        paddingBottom: '8px',
-        fontSize: '1.1em'
-    },
-    tokenContract: { 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        marginBottom: '12px', 
-        fontSize: '0.7em',
-        wordBreak: 'break-all'
-    },
-    copyButton: { 
-        marginLeft: '8px', 
-        padding: '3px 7px', 
-        fontSize: '0.8em', 
-        cursor: 'pointer', 
-        border: '1px solid #bdc3c7', 
-        borderRadius: '4px', 
-        backgroundColor: '#f8f9fa'
-    },
-    opportunityDetails: { 
-        paddingTop: '12px', 
-        marginBottom: '12px' 
-    },
-    buyText: { color: '#27ae60', margin: '4px 0', fontSize: '0.95em' },
-    sellText: { color: '#c0392b', margin: '4px 0', fontSize: '0.95em' },
-    arbitrageInfo: { 
-        backgroundColor: '#ecf0f1', 
-        padding: '8px', 
-        borderRadius: '4px', 
-        fontSize: '0.9em', 
-        textAlign: 'center', 
-        marginTop: 'auto' 
-    },
 };
 
 export default ArbitrageOpportunities;
