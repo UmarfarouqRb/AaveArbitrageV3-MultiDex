@@ -1,14 +1,18 @@
-import { ConnectButton } from "thirdweb/react";
-import { createThirdwebClient } from "thirdweb";
-import { base, baseSepolia } from "thirdweb/chains";
+import { usePrivy } from '@privy-io/react-auth';
 
-
-// ConnectButton component
+// ConnectWallet component
 const ConnectWallet = () => {
-    return (
-        <ConnectButton
-        />
-    );
+  const { ready, authenticated, login, logout } = usePrivy();
+
+  return (
+    <div>
+      {ready && authenticated ? (
+        <button onClick={logout} style={{padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#007bff', color: 'white', cursor: 'pointer'}}>Logout</button>
+      ) : (
+        <button onClick={login} style={{padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#007bff', color: 'white', cursor: 'pointer'}}>Login</button>
+      )}
+    </div>
+  );
 };
 
 export default ConnectWallet;

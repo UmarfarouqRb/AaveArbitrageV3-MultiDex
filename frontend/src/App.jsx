@@ -1,6 +1,6 @@
 import React, { useState, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { ConnectButton, useActiveAccount } from 'thirdweb/react';
+import { usePrivy } from '@privy-io/react-auth';
 import ErrorBoundary from './components/ErrorBoundary';
 
 // Lazy load the components
@@ -11,9 +11,8 @@ const TradeHistory = lazy(() => import('./components/TradeHistory'));
 const ContractControls = lazy(() => import('./components/ContractControls'));
 
 export default function App() {
-  const account = useActiveAccount();
-  const address = account?.address;
-  const activeChain = account?.chain;
+  const { ready, authenticated, user, login, logout } = usePrivy();
+  const address = user?.wallet?.address;
 
   const [tokenAddress, setTokenAddress] = useState('');
   const [inputDex, setInputDex] = useState('');
@@ -71,9 +70,12 @@ export default function App() {
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '20px', borderBottom: '1px solid #e0e0e0', marginBottom: '30px' }}>
             <div>
               {address && <p style={{margin: 0, color: '#555'}}>Connected as: <strong>{address}</strong></p>}
-              {activeChain && <p style={{margin: 0, color: '#555'}}>Network: <strong>{activeChain.name}</strong></p>}
             </div>
-            <ConnectButton />
+            {ready && authenticated ? (
+              <button onClick={logout} style={{padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#007bff', color: 'white', cursor: 'pointer'}}>Logout</button>
+            ) : (
+              <button onClick={login} style={{padding: '10px 20px', borderRadius: '6px', border: 'none', backgroundColor: '#007bff', color: 'white', cursor: 'pointer'}}>Login</button>
+            )}
           </header>
 
           {loading && <div style={{ textAlign: 'center', padding: '20px' }}><strong>Loading...</strong></div>}
