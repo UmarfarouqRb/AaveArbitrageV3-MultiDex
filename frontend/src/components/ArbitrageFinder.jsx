@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ethers } from 'ethers';
 import { usePrivy } from '@privy-io/react-auth';
-import { ARBITRAGE_BALANCER_ADDRESS, arbitrageBalancerABI } from '../constants';
+import { config } from '../utils/config';
+import { arbitrageBalancerABI } from '../utils/abi';
 import styled, { css } from 'styled-components';
 
 const Container = styled.div`
@@ -115,7 +116,7 @@ const ArbitrageFinder = () => {
       // Get the signer
       const signer = provider.getSigner();
 
-      const contract = new ethers.Contract(ARBITRAGE_BALANCER_ADDRESS, arbitrageBalancerABI, signer);
+      const contract = new ethers.Contract(config.arbitrageBalancerAddress, arbitrageBalancerABI, signer);
       
       const parsedAmount = ethers.parseUnits(amount, 18); // Assuming 18 decimals
 
