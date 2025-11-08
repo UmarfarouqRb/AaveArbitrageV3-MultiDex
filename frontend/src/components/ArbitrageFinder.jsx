@@ -3,84 +3,7 @@ import { Contract, parseUnits, AbiCoder } from 'ethers';
 import { usePrivy } from '@privy-io/react-auth';
 import { NetworkContext } from '../contexts/NetworkContext';
 import { arbitrageBalancerABI } from '../utils/abi';
-import styled, { css } from 'styled-components';
-
-const Container = styled.div`
-  padding: 20px;
-  background-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-  margin-bottom: 40px;
-  max-width: 600px;
-  margin: auto;
-`;
-
-const Header = styled.h2`
-  color: #333;
-  text-align: center;
-  margin-bottom: 10px;
-`;
-
-const Description = styled.p`
-  color: #666;
-  text-align: center;
-  margin-bottom: 25px;
-  font-size: 0.9em;
-`;
-
-const InputGroup = styled.div`
-  display: flex;
-  gap: 15px;
-  margin-bottom: 15px;
-`;
-
-const Input = styled.input`
-  width: 100%;
-  padding: 10px;
-  font-size: 14px;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  ${props => props.fullWidth && css`
-    margin-bottom: 20px;
-  `}
-`;
-
-const Button = styled.button`
-  width: 100%;
-  padding: 12px;
-  font-size: 18px;
-  font-weight: bold;
-  color: #fff;
-  background-color: #007bff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-
-  &:disabled {
-    background-color: #a0cfff;
-    cursor: not-allowed;
-  }
-`;
-
-const MessageBox = styled.div`
-  padding: 12px;
-  border-radius: 8px;
-  margin: 20px 0;
-  p {
-    margin: 5px 0 0;
-    word-break: break-all;
-  }
-`;
-
-const MessageBoxError = styled(MessageBox)`
-  color: red;
-  background-color: #ffeded;
-`;
-
-const MessageBoxSuccess = styled(MessageBox)`
-  color: green;
-  background-color: #e6ffed;
-`;
+import '../index.css'; // Import the new CSS file
 
 const ArbitrageFinder = () => {
   const { ready, authenticated, user, login } = usePrivy();
@@ -94,6 +17,14 @@ const ArbitrageFinder = () => {
   const [error, setError] = useState(null);
   const [tradeStatus, setTradeStatus] = useState(null);
   const [txHash, setTxHash] = useState('');
+
+  const dexOptions = [
+    { label: 'Uniswap V2', value: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D' },
+    { label: 'Sushiswap', value: '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F' },
+    { label: 'Pancakeswap', value: '0x10ED43C718714eb63d5aA57B78B54704E256024E' },
+    { label: 'Quickswap', value: '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff' },
+    { label: 'Trader Joe', value: '0x60aE616a2155Ee3d9A68541Ba4544862310933d4' },
+  ];
 
   const handleExecuteTrade = async () => {
     if (!ready || !authenticated) {
@@ -146,71 +77,81 @@ const ArbitrageFinder = () => {
   };
 
   return (
-    <Container>
-      <Header>Execute Arbitrage Trade</Header>
-      <Description>
+    <div className="finder-container">
+      <h2 style={{ color: '#00aaff', textAlign: 'center', marginBottom: '1rem' }}>Execute Arbitrage Trade</h2>
+      <p style={{ color: '#ccc', textAlign: 'center', marginBottom: '2rem', fontSize: '0.9em' }}>
         This interface allows you to execute a flash loan arbitrage trade. You specify the token pair, the two DEX routers to trade on, and the amount to borrow.
-      </Description>
+      </p>
 
       {error && (
-        <MessageBoxError>
+        <div style={{ padding: '1rem', borderRadius: '8px', margin: '1.5rem 0', color: '#ff4d4d', backgroundColor: '#2e2e2e' }}>
           <strong>Error:</strong> {error}
-        </MessageBoxError>
+        </div>
       )}
       {tradeStatus && (
-        <MessageBoxSuccess>
+        <div style={{ padding: '1rem', borderRadius: '8px', margin: '1.5rem 0', color: '#33cc33', backgroundColor: '#2e2e2e' }}>
           <strong>Status:</strong> {tradeStatus}
           {txHash && (
-            <p>Tx Hash: {txHash}</p>
+            <p style={{ marginTop: '0.5rem', wordBreak: 'break-all' }}>Tx Hash: {txHash}</p>
           )}
-        </MessageBoxSuccess>
+        </div>
       )}
 
-      <InputGroup>
-        <Input
+      <div className="input-group">
+        <input
           type="text"
           placeholder="Token A Address (to borrow)"
           value={tokenA}
           onChange={(e) => setTokenA(e.target.value)}
           disabled={loading}
+          className="input"
         />
-        <Input
+        <input
           type="text"
           placeholder="Token B Address"
           value={tokenB}
           onChange={(e) => setTokenB(e.target.value)}
           disabled={loading}
+          className="input"
         />
-      </InputGroup>
-      <InputGroup>
-        <Input
-          type="text"
-          placeholder="Router 1 Address (for Token A -> Token B)"
+      </div>
+      <div className="input-group">
+        <select
           value={router1}
           onChange={(e) => setRouter1(e.target.value)}
           disabled={loading}
-        />
-        <Input
-          type="text"
-          placeholder="Router 2 Address (for Token B -> Token A)"
+          className="input"
+        >
+          <option value="">Select Router 1</option>
+          {dexOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+        <select
           value={router2}
           onChange={(e) => setRouter2(e.target.value)}
           disabled={loading}
-        />
-      </InputGroup>
-      <Input
+          className="input"
+        >
+          <option value="">Select Router 2</option>
+          {dexOptions.map(option => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </div>
+      <input
         type="text"
         placeholder="Amount of Token A to borrow"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        fullWidth
         disabled={loading}
+        className="input full-width"
       />
       
-      <Button onClick={handleExecuteTrade} disabled={loading}>
+      <button onClick={handleExecuteTrade} disabled={loading} className="button-primary">
         {loading ? 'Executing...' : 'Execute Flash Loan Trade'}
-      </Button>
-    </Container>
+      </button>
+    </div>
   );
 };
 
