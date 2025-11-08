@@ -27,29 +27,50 @@ struct FlashLoanData {
 }
 
 contract ArbitrageBalancer is ReentrancyGuard, Pausable {
-    address public immutable owner;
+    address public immutable multiSig;
     IVault public immutable vault;
     UniswapV2TwapOracle public immutable twapOracle;
 
+    mapping(address => bool) public whitelistedRouters;
+    uint256 private constant BPS_DIVISOR = 10000;
+
     event FlashLoanExecuted(address indexed token, uint256 loanAmount, int256 netProfit);
     event ProfitWithdrawal(address indexed token, uint256 amount);
+    event RouterAdded(address indexed router);
+    event RouterRemoved(address indexed router);
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
+    modifier onlyMultiSig() {
+        require(msg.sender == multiSig, "Only multi-sig can call this function");
         _;
     }
 
     constructor(address _vault, address _twapOracle) {
-        owner = msg.sender;
+        multiSig = 0x7D948Ca4D146Fc4fBD667060EB6D4bfD16fCa2f6;
         vault = IVault(_vault);
         twapOracle = UniswapV2TwapOracle(_twapOracle);
+
+        // Whitelist popular Uniswap V2 compatible routers
+        whitelistedRouters[0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D] = true; // Uniswap V2
+        whitelistedRouters[0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F] = true; // Sushiswap
     }
 
-    function pause() public onlyOwner {
+    function addRouter(address router) external onlyMultiSig {
+        require(router != address(0), "Invalid router address");
+        whitelistedRouters[router] = true;
+        emit RouterAdded(router);
+    }
+
+    function removeRouter(address router) external onlyMultiSig {
+        require(router != address(0), "Invalid router address");
+        whitelistedRouters[router] = false;
+        emit RouterRemoved(router);
+    }
+
+    function pause() public onlyMultiSig {
         _pause();
     }
 
-    function unpause() public onlyOwner {
+    function unpause() public onlyMultiSig {
         _unpause();
     }
 
@@ -74,7 +95,7 @@ contract ArbitrageBalancer is ReentrancyGuard, Pausable {
         bytes calldata userData
     ) external nonReentrant {
         (address initiator, bytes memory originalUserData) = abi.decode(userData, (address, bytes));
-        
+
         _validateFlashLoan(tokens);
         FlashLoanData memory data = abi.decode(originalUserData, (FlashLoanData));
         _validateLoanData(data);
@@ -91,14 +112,16 @@ contract ArbitrageBalancer is ReentrancyGuard, Pausable {
             twapOracle.update(data.inputToken, data.middleToken);
         }
 
-        _repayLoan(tokens[0], amountFromSecondSwap, totalRepayment);
-        
-        uint256 profit = amountFromSecondSwap - totalRepayment;
-        if (profit > 0) {
-            IERC20(tokens[0]).transfer(initiator, profit);
+        int256 netProfit = int256(amountFromSecondSwap) - int256(totalRepayment);
+        require(netProfit >= 0, "Trade was not profitable after fees");
+
+        _repayLoan(tokens[0], totalRepayment);
+
+        if (netProfit > 0) {
+            IERC20(tokens[0]).transfer(initiator, uint256(netProfit));
         }
 
-        emit FlashLoanExecuted(tokens[0], loanAmount, int256(profit));
+        emit FlashLoanExecuted(tokens[0], loanAmount, netProfit);
     }
 
     function _validateFlashLoan(address[] calldata tokens) internal view {
@@ -106,9 +129,9 @@ contract ArbitrageBalancer is ReentrancyGuard, Pausable {
         require(tokens.length == 1, "This contract only handles single-token flash loans");
     }
 
-    function _validateLoanData(FlashLoanData memory data) internal pure {
+    function _validateLoanData(FlashLoanData memory data) internal view {
         require(data.inputToken != address(0) && data.middleToken != address(0), "Invalid token address provided");
-        require(data.routers.length == 2 && data.routers[0] != address(0) && data.routers[1] != address(0), "Invalid router configuration");
+        require(data.routers.length == 2 && whitelistedRouters[data.routers[0]] && whitelistedRouters[data.routers[1]], "Invalid router configuration");
         require(data.paths.length == 2, "Invalid paths configuration");
     }
 
@@ -134,7 +157,7 @@ contract ArbitrageBalancer is ReentrancyGuard, Pausable {
         if (data.twapMaxDeviationBps > 0) {
             uint256 twapAmountOut = twapOracle.consult(data.inputToken, loanAmount, data.middleToken);
             uint256 priceDifference = (amountFromFirstSwap > twapAmountOut) ? amountFromFirstSwap - twapAmountOut : twapAmountOut - amountFromFirstSwap;
-            require(priceDifference * 10000 / twapAmountOut <= data.twapMaxDeviationBps, "Price deviates too much from TWAP");
+            require(priceDifference * BPS_DIVISOR / twapAmountOut <= data.twapMaxDeviationBps, "Price deviates too much from TWAP");
         }
     }
 
@@ -153,16 +176,15 @@ contract ArbitrageBalancer is ReentrancyGuard, Pausable {
         return amountsOut[amountsOut.length - 1];
     }
 
-    function _repayLoan(address loanToken, uint256 amountFromSecondSwap, uint256 totalRepayment) internal {
-        require(amountFromSecondSwap >= totalRepayment, "Trade was not profitable after fees");
+    function _repayLoan(address loanToken, uint256 totalRepayment) internal {
         IERC20(loanToken).transfer(address(vault), totalRepayment);
     }
 
-    function withdraw(address tokenAddress) external onlyOwner {
+    function withdraw(address tokenAddress) external onlyMultiSig {
         IERC20 token = IERC20(tokenAddress);
         uint256 balance = token.balanceOf(address(this));
         if (balance > 0) {
-            token.transfer(owner, balance);
+            token.transfer(multiSig, balance);
             emit ProfitWithdrawal(tokenAddress, balance);
         }
     }

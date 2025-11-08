@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import styled, { css } from 'styled-components';
 
 const ArbitrageOpportunities = () => {
   const [opportunities, setOpportunities] = useState([]);
@@ -108,115 +109,148 @@ const ArbitrageOpportunities = () => {
   
   const isSmallScreen = containerWidth < 480;
 
-  const styles = {
-      container: { marginTop: '30px', padding: '15px', backgroundColor: '#f4f6f8', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' },
-      header: { 
-          color: '#2c3e50', 
-          textAlign: 'center', 
-          marginBottom: '20px',
-          fontSize: isSmallScreen ? '1.2em' : '1.5em' 
-      },
-      searchContainer: { marginBottom: '20px', display: 'flex' },
-      tokenInput: { flex: 1, padding: '10px', fontSize: '16px', borderRadius: '4px', border: '1px solid #ccc' },
-      grid: { 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', 
-          gap: '15px' 
-      },
-      card: { 
-          backgroundColor: '#ffffff', 
-          border: '1px solid #e1e5eb', 
-          borderRadius: '8px', 
-          padding: '12px', 
-          boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-          fontSize: isSmallScreen ? '0.85em' : '1em'
-      },
-      cardHeader: { 
-          marginTop: 0, 
-          marginBottom: '8px', 
-          color: '#34495e', 
-          borderBottom: '1px solid #f0f0f0', 
-          paddingBottom: '8px',
-          fontSize: '1.1em'
-      },
-      tokenContract: { 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'space-between', 
-          marginBottom: '12px', 
-          fontSize: '0.7em',
-          wordBreak: 'break-all'
-      },
-      copyButton: { 
-          marginLeft: '8px', 
-          padding: '3px 7px', 
-          fontSize: '0.8em', 
-          cursor: 'pointer', 
-          border: '1px solid #bdc3c7', 
-          borderRadius: '4px', 
-          backgroundColor: '#f8f9fa'
-      },
-      opportunityDetails: { 
-          paddingTop: '12px', 
-          marginBottom: '12px' 
-      },
-      buyText: { color: '#27ae60', margin: '4px 0', fontSize: '0.95em' },
-      sellText: { color: '#c0392b', margin: '4px 0', fontSize: '0.95em' },
-      arbitrageInfo: { 
-          backgroundColor: '#ecf0f1', 
-          padding: '8px', 
-          borderRadius: '4px', 
-          fontSize: '0.9em', 
-          textAlign: 'center', 
-          marginTop: 'auto' 
-      },
-      error: {
-          color: 'red',
-          textAlign: 'center',
-          padding: '20px'
-      }
-  };
-
   return (
-    <div ref={containerRef} style={styles.container}>
-      <h2 style={styles.header}>Top 10 Arbitrage Opportunities</h2>
-      <div style={styles.searchContainer}>
-        <input
+    <Container ref={containerRef} isSmall={isSmallScreen}>
+      <Header isSmall={isSmallScreen}>Top 10 Arbitrage Opportunities</Header>
+      <SearchContainer>
+        <TokenInput
           type="text"
           placeholder="Enter token contract address to find opportunities"
           value={tokenAddress}
           onChange={(e) => setTokenAddress(e.target.value)}
-          style={styles.tokenInput}
         />
-      </div>
+      </SearchContainer>
       {loading ? (
         <p style={{textAlign: 'center'}}>Finding the best opportunities...</p>
       ) : error ? (
-        <p style={styles.error}>{error}</p>
+        <ErrorText>{error}</ErrorText>
       ) : opportunities.length > 0 ? (
-        <div style={styles.grid}>
+        <Grid>
           {opportunities.map((opp, index) => (
-            <div key={index} style={styles.card}>
-              <h4 style={styles.cardHeader}>{opp.groupInfo.baseToken.symbol}/{opp.groupInfo.quoteToken.symbol}</h4>
-              <div style={styles.tokenContract}>
+            <Card key={index} isSmall={isSmallScreen}>
+              <CardHeader>{opp.groupInfo.baseToken.symbol}/{opp.groupInfo.quoteToken.symbol}</CardHeader>
+              <TokenContract>
                 <span>{opp.groupInfo.baseToken.address}</span>
-                <button onClick={() => copyToClipboard(opp.groupInfo.baseToken.address)} style={styles.copyButton}>Copy</button>
-              </div>
-              <div style={styles.opportunityDetails}>
-                <p style={styles.buyText}><strong>Buy on {opp.lowestPricePair.dexId}:</strong> {parseFloat(opp.lowestPricePair.priceNative).toPrecision(5)}</p>
-                <p style={styles.sellText}><strong>Sell on {opp.highestPricePair.dexId}:</strong> {parseFloat(opp.highestPricePair.priceNative).toPrecision(5)}</p>
-              </div>
-              <div style={styles.arbitrageInfo}>
+                <CopyButton onClick={() => copyToClipboard(opp.groupInfo.baseToken.address)}>Copy</CopyButton>
+              </TokenContract>
+              <OpportunityDetails>
+                <BuyText><strong>Buy on {opp.lowestPricePair.dexId}:</strong> {parseFloat(opp.lowestPricePair.priceNative).toPrecision(5)}</BuyText>
+                <SellText><strong>Sell on {opp.highestPricePair.dexId}:</strong> {parseFloat(opp.highestPricePair.priceNative).toPrecision(5)}</SellText>
+              </OpportunityDetails>
+              <ArbitrageInfo>
                 <p><strong>Potential Profit:</strong> {opp.percentageDiff.toFixed(2)}%</p>
-              </div>
-            </div>
+              </ArbitrageInfo>
+            </Card>
           ))}
-        </div>
+        </Grid>
       ) : (
         <p style={{textAlign: 'center'}}>Enter a token address to find opportunities.</p>
       )}
-    </div>
+    </Container>
   );
 };
+
+const Container = styled.div`
+  margin-top: 30px;
+  padding: 15px;
+  background-color: #f4f6f8;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+`;
+
+const Header = styled.h2`
+  color: #2c3e50;
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: ${props => props.isSmall ? '1.2em' : '1.5em'};
+`;
+
+const SearchContainer = styled.div`
+  margin-bottom: 20px;
+  display: flex;
+`;
+
+const TokenInput = styled.input`
+  flex: 1;
+  padding: 10px;
+  font-size: 16px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+`;
+
+const Grid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 15px;
+`;
+
+const Card = styled.div`
+  background-color: #ffffff;
+  border: 1px solid #e1e5eb;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  font-size: ${props => props.isSmall ? '0.85em' : '1em'};
+`;
+
+const CardHeader = styled.h4`
+  margin-top: 0;
+  margin-bottom: 8px;
+  color: #34495e;
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 8px;
+  font-size: 1.1em;
+`;
+
+const TokenContract = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 0.7em;
+  word-break: break-all;
+`;
+
+const CopyButton = styled.button`
+  margin-left: 8px;
+  padding: 3px 7px;
+  font-size: 0.8em;
+  cursor: pointer;
+  border: 1px solid #bdc3c7;
+  border-radius: 4px;
+  background-color: #f8f9fa;
+`;
+
+const OpportunityDetails = styled.div`
+  padding-top: 12px;
+  margin-bottom: 12px;
+`;
+
+const BuyText = styled.p`
+  color: #27ae60;
+  margin: 4px 0;
+  font-size: 0.95em;
+`;
+
+const SellText = styled.p`
+  color: #c0392b;
+  margin: 4px 0;
+  font-size: 0.95em;
+`;
+
+const ArbitrageInfo = styled.div`
+  background-color: #ecf0f1;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  text-align: center;
+  margin-top: auto;
+`;
+
+const ErrorText = styled.p`
+  color: red;
+  text-align: center;
+  padding: 20px;
+`;
 
 export default ArbitrageOpportunities;

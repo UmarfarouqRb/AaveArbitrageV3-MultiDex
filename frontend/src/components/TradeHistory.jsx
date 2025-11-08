@@ -1,11 +1,29 @@
 import React from 'react';
+import styled from 'styled-components';
+
+const Container = styled.div`
+  padding: 20px;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+`;
+
+const Header = styled.h2`
+  color: #333;
+  text-align: center;
+`;
+
+const PlaceholderText = styled.p`
+  text-align: center;
+  color: #666;
+`;
 
 const TradeHistory = () => {
   return (
-    <div style={{ padding: '20px', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-      <h2 style={{ color: '#333', textAlign: 'center' }}>Trade History</h2>
-      <p style={{ textAlign: 'center', color: '#666' }}>Trade history will be displayed here.</p>
-    </div>
+    <Container>
+      <Header>Trade History</Header>
+      <PlaceholderText>Trade history will be displayed here.</PlaceholderText>
+    </Container>
   );
 };
 
