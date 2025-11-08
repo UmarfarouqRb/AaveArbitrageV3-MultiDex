@@ -5,7 +5,7 @@ import { PrivyProvider } from '@privy-io/react-auth';
 
 createRoot(document.getElementById('root')).render(
   <PrivyProvider
-    appId={import.meta.env.VITE_PRIVY_APP_ID}
+    appId="cmhooe9em00zsl40cn33f5lus"
     config={{
       // Customize Privy's appearance in your app
       appearance: {
