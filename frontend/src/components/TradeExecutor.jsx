@@ -1,7 +1,6 @@
 import { useState, useContext, useEffect } from 'react';
 import { NetworkContext } from '../contexts/NetworkContext';
 import { networks } from '../utils/networks';
-import '../ArbitrageFinder.css';
 
 const TradeExecutor = ({ onFindOpportunities }) => {
   const { networkConfig } = useContext(NetworkContext);

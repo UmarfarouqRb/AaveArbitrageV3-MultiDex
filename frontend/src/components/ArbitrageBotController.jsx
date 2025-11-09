@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Wallet } from 'ethers';
-import './ArbitrageBotController.css';
 
 const ArbitrageBotController = () => {
   const [privateKey, setPrivateKey] = useState('');
+  const [infuraApiKey, setInfuraApiKey] = useState('');
   const [botWalletAddress, setBotWalletAddress] = useState('');
   const [isBotRunning, setIsBotRunning] = useState(false);
-  const [log, setLog] = useState('Bot is idle. Enter a private key and start the bot to check for opportunities.');
+  const [log, setLog] = useState('Bot is idle. Enter a private key and Infura API key, then start the bot to check for opportunities.');
 
   const intervalRef = useRef(null);
   const logRef = useRef(null);
@@ -26,17 +26,26 @@ const ArbitrageBotController = () => {
     }
   }, []);
 
+  const handleInfuraApiKeyChange = useCallback((key) => {
+    setInfuraApiKey(key);
+    sessionStorage.setItem('botInfuraApiKey', key);
+  }, []);
+
   useEffect(() => {
     const storedPrivateKey = sessionStorage.getItem('botPrivateKey');
     if (storedPrivateKey) {
       handlePrivateKeyChange(storedPrivateKey);
+    }
+    const storedApiKey = sessionStorage.getItem('botInfuraApiKey');
+    if (storedApiKey) {
+      handleInfuraApiKeyChange(storedApiKey);
     }
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
     };
-  }, [handlePrivateKeyChange]);
+  }, [handlePrivateKeyChange, handleInfuraApiKeyChange]);
 
   useEffect(() => {
     if (logRef.current) {
@@ -55,13 +64,23 @@ const ArbitrageBotController = () => {
     setLog('Private key has been reset. The bot is now idle.');
   };
 
+  const handleResetInfuraApiKey = () => {
+    if (isBotRunning) {
+      setLog(prev => `${prev}\n[${new Date().toLocaleTimeString()}] Error: Please stop the bot before resetting the API key.`);
+      return;
+    }
+    setInfuraApiKey('');
+    sessionStorage.removeItem('botInfuraApiKey');
+    setLog('Infura API key has been reset.');
+  };
+
   const runArbitrageCheck = useCallback(async () => {
     setLog(prev => `${prev}\n[${new Date().toLocaleTimeString()}] Checking for opportunities...`);
     try {
-      const response = await fetch('/.netlify/functions/arbitrage-bot', {
+      const response = await fetch('/api/arbitrage-bot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ privateKey }),
+        body: JSON.stringify({ privateKey, infuraProjectId: infuraApiKey }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || `HTTP error! status: ${response.status}`);
@@ -70,7 +89,7 @@ const ArbitrageBotController = () => {
       console.error('Error during arbitrage check:', error);
       setLog(prev => `${prev}\n[${new Date().toLocaleTimeString()}] Error: ${error.message}`);
     }
-  }, [privateKey]);
+  }, [privateKey, infuraApiKey]);
 
   const handleToggleBot = () => {
     if (isBotRunning) {
@@ -83,6 +102,10 @@ const ArbitrageBotController = () => {
         setLog('Error: Please enter a valid private key before starting the bot.');
         return;
       }
+      if (!infuraApiKey) {
+        setLog('Error: Please enter your Infura API key before starting the bot.');
+        return;
+      }
       setIsBotRunning(true);
       setLog(`[${new Date().toLocaleTimeString()}] Bot started! It will check for opportunities every 15 seconds.`);
       runArbitrageCheck();
@@ -91,25 +114,23 @@ const ArbitrageBotController = () => {
   };
 
   return (
-    <div className="bot-controller-container">
-      <h2 className="bot-controller-title">Arbitrage Bot Controller</h2>
+    <div>
+      <h2>Arbitrage Bot Controller</h2>
       
-      <div className="input-group">
+      <div>
         <label htmlFor="privateKey">Bot Private Key (persists in session)</label>
-        <div className="input-with-button">
+        <div>
           <input
             type="password"
             id="privateKey"
             value={privateKey}
             onChange={(e) => handlePrivateKeyChange(e.target.value)}
-            className="input"
             placeholder="Enter EOA private key (0x...)"
             disabled={isBotRunning}
           />
           <button
             onClick={handleResetPrivateKey}
             disabled={isBotRunning}
-            className="button-reset"
             title="Reset Private Key"
           >
             Reset
@@ -117,24 +138,44 @@ const ArbitrageBotController = () => {
         </div>
       </div>
 
+      <div>
+        <label htmlFor="infuraApiKey">Infura API Key (persists in session)</label>
+        <div>
+          <input
+            type="password"
+            id="infuraApiKey"
+            value={infuraApiKey}
+            onChange={(e) => handleInfuraApiKeyChange(e.target.value)}
+            placeholder="Enter your Infura API Key"
+            disabled={isBotRunning}
+          />
+          <button
+            onClick={handleResetInfuraApiKey}
+            disabled={isBotRunning}
+            title="Reset Infura API Key"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+
       {botWalletAddress && (
-        <div className="wallet-address-info">
+        <div>
           <p>Bot Wallet Address:</p>
-          <p className="font-mono">{botWalletAddress}</p>
+          <p>{botWalletAddress}</p>
         </div>
       )}
 
       <button
         onClick={handleToggleBot}
-        disabled={!botWalletAddress || botWalletAddress === 'Invalid Private Key'}
-        className={`button-toggle ${isBotRunning ? 'stop' : 'start'}`}
+        disabled={!botWalletAddress || botWalletAddress === 'Invalid Private Key' || !infuraApiKey}
       >
         {isBotRunning ? 'Stop Bot' : 'Start Bot'}
       </button>
 
-      <div className="log-container">
+      <div>
           <h3>Bot Logs:</h3>
-          <pre className="log-content" ref={logRef}>{log}</pre>
+          <pre ref={logRef}>{log}</pre>
       </div>
     </div>
   );

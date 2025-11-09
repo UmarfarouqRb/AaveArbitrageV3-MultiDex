@@ -1,0 +1,163 @@
+/* Global Styles */
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #fdf6e3; /* Warm, light background */
+  color: #657b83; /* Solarized base00 */
+  font-size: 14px;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* App Container */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background-color: #fdf6e3; /* Warm, light background */
+  border-bottom: 1px solid #eee8d5; /* Solarized base2 */
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+}
+
+/* Main Content */
+.main-content {
+  flex-grow: 1;
+  padding: 1rem;
+}
+
+/* Footer */
+.app-footer {
+  padding: 1rem;
+  background-color: #fdf6e3; /* Warm, light background */
+  border-top: 1px solid #eee8d5; /* Solarized base2 */
+  text-align: center;
+  font-size: 0.9em;
+  color: #93a1a1; /* Solarized base1 */
+}
+
+/* Arbitrage Finder */
+.arbitrage-finder-container {
+  background-color: #fdf6e3; /* Warm, light background */
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 600px;
+  margin: 2rem auto;
+  color: #657b83; /* Solarized base00 */
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border: 1px solid #eee8d5; /* Solarized base2 */
+}
+
+.arbitrage-finder-container h2 {
+  color: #cb4b16; /* Solarized orange */
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.arbitrage-finder-container p {
+  color: #93a1a1; /* Solarized base1 */
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+/* Input and Select */
+.input,
+.select {
+  width: 100%;
+  padding: 12px 15px;
+  background-color: #eee8d5; /* Solarized base2 */
+  border: 1px solid #93a1a1; /* Solarized base1 */
+  border-radius: 8px;
+  color: #657b83; /* Solarized base00 */
+  font-size: 1rem;
+}
+
+.input:focus,
+.select:focus {
+  outline: none;
+  border-color: #268bd2; /* Solarized blue */
+  box-shadow: 0 0 0 3px rgba(38, 139, 210, 0.2);
+}
+
+/* Buttons */
+.button-primary {
+  width: 100%;
+  padding: 15px;
+  background: #268bd2; /* Solarized blue */
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button-primary:hover {
+  background: #1a6b9a; /* Darker blue */
+}
+
+.button-primary:disabled {
+  background: #93a1a1; /* Solarized base1 */
+  cursor: not-allowed;
+}
+
+.button-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-danger {
+  color: #dc3545;
+}
+
+.text-success {
+  color: #28a745;
+}
+
+
+/* ... (add other component styles and refactor them to use the new color scheme) ... */
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .arbitrage-finder-container {
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  .input-group {
+    flex-direction: column;
+  }
+  
+  .app-header {
+    flex-direction: column;
+  }
+  
+  .header-controls {
+    margin-top: 1rem;
+  }
+}

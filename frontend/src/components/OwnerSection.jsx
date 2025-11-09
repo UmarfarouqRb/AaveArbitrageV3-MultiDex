@@ -3,7 +3,6 @@ import { Contract, isAddress } from 'ethers';
 import { usePrivy } from '@privy-io/react-auth';
 import { NetworkContext } from '../contexts/NetworkContext';
 import { arbitrageBalancerABI } from '../utils/abi';
-import './OwnerSection.css';
 
 const OwnerSection = () => {
   const { user } = usePrivy();
@@ -82,35 +81,33 @@ const OwnerSection = () => {
   }, [withdrawToken, getSignerAndContract]);
 
   return (
-    <div className="owner-section">
+    <div>
       <h2>Owner Section</h2>
-      <div className="owner-actions">
-        <div className="action-group">
-          <button onClick={handlePause} className="button-danger">Pause Contract</button>
-          <button onClick={handleUnpause} className="button-success">Unpause Contract</button>
+      <div>
+        <div>
+          <button onClick={handlePause}>Pause Contract</button>
+          <button onClick={handleUnpause}>Unpause Contract</button>
         </div>
-        <div className="action-group">
+        <div>
           <input
             type="text"
             placeholder="New Owner Address"
             value={newOwner}
             onChange={(e) => setNewOwner(e.target.value)}
-            className="input"
           />
           <button onClick={handleChangeOwner}>Change Owner</button>
         </div>
-        <div className="action-group">
+        <div>
           <input
             type="text"
             placeholder="Token Address to Withdraw"
             value={withdrawToken}
             onChange={(e) => setWithdrawToken(e.target.value)}
-            className="input"
           />
           <button onClick={handleWithdraw}>Withdraw Profits</button>
         </div>
       </div>
-      {status && <p className="status-message">{status}</p>}
+      {status && <p>{status}</p>}
     </div>
   );
 };

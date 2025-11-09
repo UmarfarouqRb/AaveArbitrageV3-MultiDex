@@ -1,7 +1,6 @@
 import { useState, useContext, useCallback } from 'react';
 import { NetworkContext } from '../contexts/NetworkContext';
 import { useArbitrageExecutor } from '../hooks/useArbitrageExecutor';
-import './ArbitrageOpportunities.css';
 
 const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) => {
   const [amounts, setAmounts] = useState({});
@@ -36,11 +35,11 @@ const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) =
   }, [amounts, executeTrade]);
 
   return (
-    <div className="arbitrage-opportunities-container">
+    <div>
       <h2>Arbitrage Opportunities</h2>
-      {fetchError && <p className="error-message">{fetchError}</p>}
-      {executionError && <p className="error-message">Execution failed: {executionError}</p>}
-      <div className="table-container">
+      {fetchError && <p>{fetchError}</p>}
+      {executionError && <p>Execution failed: {executionError}</p>}
+      <div>
         <table>
           <thead>
             <tr>
@@ -55,7 +54,7 @@ const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) =
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="7" style={{ textAlign: 'center' }}>Loading...</td></tr>
+              <tr><td colSpan="7" className="text-center">Loading...</td></tr>
             ) : opportunities && opportunities.length > 0 ? (
               opportunities.map((op) => {
                 const amount = amounts[op.id] || 0;
@@ -68,7 +67,7 @@ const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) =
                     <td>{op.tokenA.substring(0, 6)}.../{op.tokenB.substring(0, 6)}...</td>
                     <td>{op.buyOn} vs {op.sellOn}</td>
                     <td>{gasCost ? `$${gasCost}` : '$0.00'}</td>
-                    <td style={{ color: netProfit < 0 ? '#dc3545' : '#28a745' }}>
+                    <td className={netProfit < 0 ? "text-danger" : "text-success"}>
                       ${netProfit}
                     </td>
                     <td>{op.potentialGain}</td>
@@ -76,17 +75,17 @@ const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) =
                       <input
                         type="number"
                         placeholder="e.g., 1.0"
-                        className="amount-input"
                         value={amounts[op.id] || ''}
                         onChange={(e) => handleAmountChange(op.id, e.target.value)}
                         disabled={isExecuting}
+                        className="input"
                       />
                     </td>
                     <td>
                       <button 
-                        className="execute-button" 
                         onClick={() => handleExecute(op)}
                         disabled={isExecuting || !gasCost || netProfit < 0}
+                        className="button-primary"
                       >
                         {isExecuting ? 'Executing...' : 'Execute'}
                       </button>
@@ -95,7 +94,7 @@ const ArbitrageOpportunities = ({ opportunities, loading, error: fetchError }) =
                 )
               })
             ) : (
-              <tr><td colSpan="7" style={{ textAlign: 'center' }}>No opportunities found.</td></tr>
+              <tr><td colSpan="7" className="text-center">No opportunities found.</td></tr>
             )}
           </tbody>
         </table>

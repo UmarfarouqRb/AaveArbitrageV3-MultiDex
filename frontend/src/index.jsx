@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import { PrivyProvider } from '@privy-io/react-auth';
 import { NetworkProvider } from './contexts/NetworkContext';
+import './index.css';
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
