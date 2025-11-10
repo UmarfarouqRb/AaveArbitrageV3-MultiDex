@@ -1,8 +1,10 @@
 const { JsonRpcProvider, Contract, Wallet, AbiCoder, parseUnits, formatUnits, isAddress } = require('ethers');
 
 // ABIs
+const { uniswapV2RouterABI, arbitrageBalancerABI } = require('./abi.js'); // Corrected path
+
 const routerABI = [
-    ...require('../../frontend/src/utils/abi').uniswapV2RouterABI,
+    ...uniswapV2RouterABI,
     'function factory() external view returns (address)'
 ];
 const pairABI = [
@@ -12,7 +14,7 @@ const pairABI = [
 const factoryABI = [
     'function getPair(address tokenA, address tokenB) external view returns (address pair)'
 ];
-const ARBITRAGE_BOT_ABI = require('../../frontend/src/utils/abi').arbitrageBalancerABI;
+const ARBITRAGE_BOT_ABI = arbitrageBalancerABI; // Use the destructured variable
 
 // Constants
 const GAS_LIMIT_ESTIMATE = 450000;
