@@ -16,7 +16,7 @@ export default function Layout({ children, isOwner }) {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1 className="app-title"><Link to="/">Arbitrage Finder</Link></h1>
+        <h1 className="app-title"><Link to="/">Forge Arbitrage Bot</Link></h1>
         <div className="header-controls">
           <select value={selectedNetwork} onChange={handleNetworkChange} className="select">
             {Object.keys(networks).map(networkKey => (

@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { Wallet } from 'ethers';
 
@@ -80,7 +79,6 @@ async function decryptData(encryptedData, password) {
   }
 }
 
-
 const WalletContext = createContext(null);
 
 export function WalletProvider({ children }) {
@@ -129,8 +127,10 @@ export function WalletProvider({ children }) {
         setIsKeyStored(false);
     }, []);
 
+    // IMPORTANT: Expose the raw privateKey in the context value
     const value = useMemo(() => ({
         wallet,
+        privateKey, // This is now available to components that use the context
         isKeyStored,
         isUnlocked: !!privateKey,
         botWalletAddress: wallet ? wallet.address : null,
