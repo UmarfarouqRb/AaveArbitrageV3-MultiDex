@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import './ArbitrageOpportunities.css'; // Reusing styles
 
 const ArbitrageFinder = () => {
   const [tokenA, setTokenA] = useState('');
