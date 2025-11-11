@@ -103,86 +103,78 @@ exports.handler = async function(event) {
     }
 };
 
-// --- ARBITRAGE SCANNER AND EXECUTOR ---
+// --- ARBITRAGE SCANNER AND EXECUTOR --
 
 async function findAndExecuteArbitrage(wallet, provider, arbitrageBotAddress, profitThreshold, gasStrategy) {
     let tradeExecuted = false;
-
     const allPaths = [];
     for (const pair of TOKEN_PAIRS) {
         for (let i = 0; i < DEX_CONFIG.length; i++) {
             for (let j = 0; j < DEX_CONFIG.length; j++) {
                 if (i === j) continue;
-                allPaths.push({ pair, dex1: DEX_CONFIG[i], dex2: DEX_CONFIG[j] });
+                allPaths.push({
+                    pair,
+                    dex1: DEX_CONFIG[i],
+                    dex2: DEX_CONFIG[j]
+                });
             }
         }
     }
-
-    const results = await Promise.all(allPaths.map(async (path) => {
-        if (tradeExecuted) return null; // Stop processing if a trade has been made
-
-        try {
-            const { pair, dex1, dex2 } = path;
-            const tokenA = pair.a;
-            const tokenB = pair.b;
-
-            // --- Accurate Simulation ---
-            const tokenAContract = new Contract(tokenA, ERC20_ABI, provider);
-            const tokenADecimals = await tokenAContract.decimals();
-            
-            const factory1 = new Contract(dex1.factory, FACTORY_ABI, provider);
-            const pairAddress = await factory1.getPair(tokenA, tokenB);
-            if (pairAddress === '0x0000000000000000000000000000000000000000') return null;
-
-            const pairContract = new Contract(pairAddress, PAIR_ABI, provider);
-            const reserves = await pairContract.getReserves();
-            const token0 = await pairContract.token0();
-            const reserve = (tokenA.toLowerCase() === token0.toLowerCase()) ? reserves[0] : reserves[1];
-            const loanAmount = (reserve * BigInt(DYNAMIC_LOAN_PERCENTAGE)) / 1000n;
-
-            if (loanAmount <= 0) return null;
-            
-            const router1 = new Contract(dex1.router, ROUTER_ABI, provider);
-            const amountsOut1 = await router1.getAmountsOut(loanAmount, [tokenA, tokenB]);
-            const amountOutFromFirstSwap = amountsOut1[1];
-
-            const router2 = new Contract(dex2.router, ROUTER_ABI, provider);
-            const finalAmountsOut = await router2.getAmountsOut(amountOutFromFirstSwap, [tokenB, tokenA]);
-            const simulatedFinalAmount = finalAmountsOut[1];
-
-            // --- Profitability Check with All Costs ---
-            const flashLoanFee = (loanAmount * BigInt(BALANCER_FEE)) / 10000n;
-            const totalRepayment = loanAmount + flashLoanFee;
-            const netProfit = simulatedFinalAmount - totalRepayment;
-
-            const profitThresholdAmount = parseUnits(profitThreshold || '0', tokenADecimals);
-
-            if (netProfit > profitThresholdAmount) {
-                if (tradeExecuted) return null; // Double-check before executing
-                tradeExecuted = true; // Set flag immediately
-
-                console.log(`Profitable trade FOUND: ${pair.name} on ${dex1.name} -> ${dex2.name}`);
-                console.log(`Gross Profit: ${formatUnits(netProfit, tokenADecimals)}`);
-
-                return executeTrade(wallet, provider, arbitrageBotAddress, gasStrategy, tokenA, tokenB, dex1, dex2, loanAmount, profitThresholdAmount, tokenADecimals);
+    const scanEndTime = Date.now() + 10 * 60 * 1000;
+    while (Date.now() < scanEndTime && !tradeExecuted) {
+        const results = await Promise.all(allPaths.map(async (path) => {
+            if (tradeExecuted) return null;
+            try {
+                const {
+                    pair,
+                    dex1,
+                    dex2
+                } = path;
+                const tokenA = pair.a;
+                const tokenB = pair.b;
+                const tokenAContract = new Contract(tokenA, ERC20_ABI, provider);
+                const tokenADecimals = await tokenAContract.decimals();
+                const factory1 = new Contract(dex1.factory, FACTORY_ABI, provider);
+                const pairAddress = await factory1.getPair(tokenA, tokenB);
+                if (pairAddress === '0x0000000000000000000000000000000000000000') return null;
+                const pairContract = new Contract(pairAddress, PAIR_ABI, provider);
+                const reserves = await pairContract.getReserves();
+                const token0 = await pairContract.token0();
+                const reserve = (tokenA.toLowerCase() === token0.toLowerCase()) ? reserves[0] : reserves[1];
+                const loanAmount = (reserve * BigInt(DYNAMIC_LOAN_PERCENTAGE)) / 1000n;
+                if (loanAmount <= 0) return null;
+                const router1 = new Contract(dex1.router, ROUTER_ABI, provider);
+                const amountsOut1 = await router1.getAmountsOut(loanAmount, [tokenA, tokenB]);
+                const amountOutFromFirstSwap = amountsOut1[1];
+                const router2 = new Contract(dex2.router, ROUTER_ABI, provider);
+                const finalAmountsOut = await router2.getAmountsOut(amountOutFromFirstSwap, [tokenB, tokenA]);
+                const simulatedFinalAmount = finalAmountsOut[1];
+                const flashLoanFee = (loanAmount * BigInt(BALANCER_FEE)) / 10000n;
+                const totalRepayment = loanAmount + flashLoanFee;
+                const netProfit = simulatedFinalAmount - totalRepayment;
+                const profitThresholdAmount = parseUnits(profitThreshold || '0', tokenADecimals);
+                if (netProfit > profitThresholdAmount) {
+                    if (tradeExecuted) return null;
+                    tradeExecuted = true;
+                    console.log(`Profitable trade FOUND: ${pair.name} on ${dex1.name} -> ${dex2.name}`);
+                    console.log(`Gross Profit: ${formatUnits(netProfit, tokenADecimals)}`);
+                    return executeTrade(wallet, provider, arbitrageBotAddress, gasStrategy, tokenA, tokenB, dex1, dex2, loanAmount, profitThresholdAmount, tokenADecimals);
+                }
+                return null;
+            } catch (error) {
+                return null;
             }
-            return null;
-
-        } catch (error) {
-            // console.warn(`Skipping path due to error: ${error.message}`);
-            return null;
+        }));
+        const successfulTrade = results.find(r => r !== null);
+        if (successfulTrade) {
+            return successfulTrade;
         }
-    }));
-
-    const successfulTrade = results.find(r => r !== null);
-
-    if (successfulTrade) {
-        return successfulTrade;
     }
-
-    return { tradeExecuted: false, message: "Scan complete. No profitable arbitrage opportunities found meeting your criteria." };
+    return {
+        tradeExecuted: false,
+        message: "Scan complete. No profitable arbitrage opportunities found meeting your criteria."
+    };
 }
-
 async function executeTrade(wallet, provider, arbitrageBotAddress, gasStrategy, tokenA, tokenB, dex1, dex2, loanAmount, profitThresholdAmount, tokenADecimals) {
     const arbitrageBot = new Contract(arbitrageBotAddress, ARBITRAGE_BALANCER_ABI, wallet);
 

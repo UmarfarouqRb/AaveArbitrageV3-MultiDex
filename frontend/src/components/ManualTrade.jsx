@@ -88,49 +88,47 @@ const ManualTrade = () => {
 
   return (
     <div className="manual-trade-container">
-      <h2 className="text-2xl font-bold text-center mb-6">Manual Trade Executor</h2>
-      <form onSubmit={executeTrade} className="trade-form bg-gray-800 p-6 rounded-lg shadow-lg">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <input type="text" value={tokenA} onChange={(e) => setTokenA(e.target.value)} placeholder="Token to Borrow (e.g., WETH)" className="input input-bordered w-full" required />
-          <input type="text" value={tokenB} onChange={(e) => setTokenB(e.target.value)} placeholder="Token to Swap For (e.g., USDC)" className="input input-bordered w-full" required />
-          <select value={dex1} onChange={(e) => setDex1(e.target.value)} className="select select-bordered w-full" required>
-            <option value="" disabled>Source DEX</option>
-            {Object.entries(DEX_CHOICES).map(([key, name]) => (<option key={key} value={key}>{name}</option>))}
-          </select>
-          <select value={dex2} onChange={(e) => setDex2(e.target.value)} className="select select-bordered w-full" required>
-            <option value="" disabled>Destination DEX</option>
-            {Object.entries(DEX_CHOICES).map(([key, name]) => (<option key={key} value={key}>{name}</option>))}
-          </select>
-          <input type="number" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} placeholder="Loan Amount" className="input input-bordered w-full md:col-span-2" required />
-        </div>
+      <h2>Manual Trade Executor</h2>
+      <form onSubmit={executeTrade} className="trade-form">
+        <input type="text" value={tokenA} onChange={(e) => setTokenA(e.target.value)} placeholder="Token to Borrow (e.g., WETH)" className="input-field" required />
+        <input type="text" value={tokenB} onChange={(e) => setTokenB(e.target.value)} placeholder="Token to Swap For (e.g., USDC)" className="input-field" required />
+        <select value={dex1} onChange={(e) => setDex1(e.target.value)} className="select-field" required>
+          <option value="" disabled>Source DEX</option>
+          {Object.entries(DEX_CHOICES).map(([key, name]) => (<option key={key} value={key}>{name}</option>))}
+        </select>
+        <select value={dex2} onChange={(e) => setDex2(e.target.value)} className="select-field" required>
+          <option value="" disabled>Destination DEX</option>
+          {Object.entries(DEX_CHOICES).map(([key, name]) => (<option key={key} value={key}>{name}</option>))}
+        </select>
+        <input type="number" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} placeholder="Loan Amount" className="input-field" required />
         
-        <div className="simulation-results-container bg-gray-900 p-4 rounded-md mb-4">
-          <h4 className="text-lg font-semibold text-center mb-2">Pre-Trade Simulation</h4>
-          {simulating && <p className='text-center text-gray-400'>Simulating...</p>}
-          {simulationError && <p className='text-center text-red-500'>{simulationError}</p>}
+        <div className="simulation-results-container">
+          <h4>Pre-Trade Simulation</h4>
+          {simulating && <p>Simulating...</p>}
+          {simulationError && <p className="error-message">{simulationError}</p>}
           {simulationResult && (
-            <div className={`text-center font-bold ${isTradeProfitable ? 'text-green-500' : 'text-red-500'}`}>
+            <div className={isTradeProfitable ? 'text-success' : 'text-danger'}>
               <p>Estimated Profit: {simulationResult.estimatedProfit} {simulationResult.profitToken}</p>
               <p>{isTradeProfitable ? "Trade appears profitable." : "Trade does not appear profitable."}</p>
             </div>
           )}
         </div>
 
-        <button type="submit" disabled={loading || simulating || !isTradeProfitable} className="btn btn-primary w-full">{loading ? 'Executing...' : 'Execute Trade'}</button>
+        <button type="submit" disabled={loading || simulating || !isTradeProfitable} className="button button-primary">{loading ? 'Executing...' : 'Execute Trade'}</button>
       </form>
       
-      {error && <div className="text-center text-red-500 mt-4"><p>{error}</p></div>}
+      {error && <div className="error-message"><p>{error}</p></div>}
 
       {result && (
-        <div className="results-container mt-6 bg-gray-800 p-6 rounded-lg shadow-lg">
-          <h3 className="text-xl font-bold text-center mb-4">Trade Result</h3>
+        <div className="results-container">
+          <h3>Trade Result</h3>
           {result.isProfitable ? (
-            <div className="text-green-500 text-center">
-              <h4 className="text-lg font-semibold">Trade Executed Successfully!</h4>
+            <div className="text-success">
+              <h4>Trade Executed Successfully!</h4>
               <p>Profit: {result.profit} {result.profitToken}</p>
             </div>
           ) : (
-            <p className="text-center">Trade was not profitable or failed to execute.</p>
+            <p>Trade was not profitable or failed to execute.</p>
           )}
         </div>
       )}

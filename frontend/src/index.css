@@ -147,3 +147,40 @@ body {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+.top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background-color: var(--component-background);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav-links a {
+    color: var(--text-color-muted);
+    text-decoration: none;
+    margin-right: 1.5rem;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+
+.nav-links a:hover {
+    color: var(--text-color);
+}
+
+.manual-trade-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.trade-form {
+    width: 100%;
+    max-width: 500px;
+}
+
+.trade-form .input-field,
+.trade-form .select-field {
+    margin-bottom: 1rem;
+}
