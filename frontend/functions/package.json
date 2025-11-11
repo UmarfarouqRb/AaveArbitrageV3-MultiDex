@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "ethers": "^6.15.0",
-    "lodash": "^4.17.21"
-  }
-}
