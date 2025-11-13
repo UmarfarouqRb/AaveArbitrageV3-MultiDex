@@ -1,4 +1,3 @@
-
 // API Configuration
 // =================
 // This file centralizes the API endpoints for the application.
@@ -8,4 +7,5 @@
 const API_BASE_URL = 'https://arbitrage-app1.fly.dev';
 
 export const GET_ARBITRAGE_OPPORTUNITIES_URL = `${API_BASE_URL}/api/trade-history`;
-export const EXECUTE_ARBITRAGE_URL = `${API_BASE_URL}/api/execute-trade`;
+export const EXECUTE_TRADE_URL = `${API_BASE_URL}/api/execute-trade`;
+export const SIMULATE_TRADE_URL = `${API_BASE_URL}/api/simulate-trade`;

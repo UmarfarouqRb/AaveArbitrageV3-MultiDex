@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { debounce } from 'lodash';
 import { DEX_CHOICES, EXPLORER_URL } from '../constants';
 import { useNetwork } from '../contexts/NetworkContext';
+import { EXECUTE_TRADE_URL, SIMULATE_TRADE_URL } from '../config';
 
 const ManualTrade = () => {
   const { network } = useNetwork();
@@ -20,8 +20,6 @@ const ManualTrade = () => {
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationError, setSimulationError] = useState(null);
 
-  const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-
   const handleExecuteTrade = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -29,7 +27,7 @@ const ManualTrade = () => {
     setResult(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/execute-trade`, {
+      const response = await fetch(EXECUTE_TRADE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ network, tokenA, tokenB, dex1, dex2, loanAmount })
@@ -59,7 +57,7 @@ const ManualTrade = () => {
       setSimulating(true);
       setSimulationError(null);
       try {
-        const response = await fetch(`${API_URL}/api/simulate-trade`, {
+        const response = await fetch(SIMULATE_TRADE_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(tradeParams),
@@ -77,7 +75,7 @@ const ManualTrade = () => {
         setSimulating(false);
       }
     }, 500),
-    [API_URL]
+    []
   );
 
   useEffect(() => {

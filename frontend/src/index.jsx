@@ -8,7 +8,7 @@ import './index.css';
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <PrivyProvider
-      appId={import.meta.env.VITE_PRIVY_APP_ID || "cmhooe9em00zsl40cn33f5lus"}
+      appId={import.meta.env.VITE_PRIVY_APP_ID}
       config={{
         appearance: {
           theme: 'light',

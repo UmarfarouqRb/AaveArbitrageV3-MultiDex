@@ -14,7 +14,7 @@
   # This rule proxies all API requests from your frontend...
   from = "/api/*"
   # ...to your live Render backend.
-  to = "https://arbitrage-sgk3.onrender.com/:splat"
+  to = "https://arbitrage-sgk3.onrender.com/api/:splat"
   # The 200 status code means this is a "rewrite," which masks the backend URL.
   status = 200
   # Force the redirect to ensure it always applies.
