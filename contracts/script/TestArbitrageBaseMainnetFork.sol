@@ -1,4 +1,3 @@
-solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -13,7 +12,7 @@ contract TestArbitrageMainnetFork is Script {
     // --- Base Mainnet Contract Addresses (Correct Checksums) ---
     address public constant AAVE_V3_POOL = 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5; // Corrected Aave Pool
     address public constant UNISWAP_V3_ROUTER = 0x2626664c2603336E57B271c5C0b26F421741e481;
-    address public constant AERODROME_ROUTER = 0xCf77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
+    address public constant AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
     address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // Native USDC on Base
     address public constant WETH = 0x4200000000000000000000000000000000000006; // WETH on Base
     address public constant AAVE = 0xe32659740f83465451D45117215255476AED4862; // AAVE on Base
@@ -77,7 +76,7 @@ contract TestArbitrageMainnetFork is Script {
             amountOutMinimum: 0
         });
 
-        uint256 loanAmount = 1_000_000 * 10**6; // 1,000,000 USDC (USDC has 6 decimals)
+        uint256 loanAmount = 1_000 * 10**6; // 1,000 USDC (USDC has 6 decimals)
         bytes memory userData = abi.encode(swaps, 0); // minProfit = 0 for initial testing
 
         // 4. Provide the contract with gas money to pay for swaps.
@@ -86,7 +85,7 @@ contract TestArbitrageMainnetFork is Script {
 
         // 5. Execute the arbitrage. This will either succeed or, more likely,
         //    revert with "Insufficient funds to repay" if not profitable.
-        console.log("Simulating 2-hop arbitrage (AerodromeV3 USDC->WETH, UniswapV3 WETH->USDC) with 1,000,000 USDC loan...");
+        console.log("Simulating 2-hop arbitrage (AerodromeV3 USDC->WETH, UniswapV3 WETH->USDC) with 1,000 USDC loan...");
         try arbitrageContract.startArbitrage(USDC, loanAmount, userData) {}
         catch (bytes memory reason) {
             console.log("Arbitrage failed:");
