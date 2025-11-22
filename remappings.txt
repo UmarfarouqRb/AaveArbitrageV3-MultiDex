@@ -1,2 +1,9 @@
-openzeppelin-contracts=lib/openzeppelin-contracts/contracts/
-@aave/core-v3=lib/aave-v3-core/
+src/=contracts/src/
+@aave/core-v3/=lib/aave-v3-core/
+@pancakeswap/v3-core/=lib/pancake-v3-contracts/projects/v3-core/
+@uniswap/v3-core/=lib/v3-core/
+pancake-v3-contracts/=lib/pancake-v3-contracts/projects/v3-periphery/contracts/
+v3-periphery/=lib/v3-periphery/contracts/
+openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
+aerodrome/=lib/contracts/contracts/
+forge-std/=lib/forge-std/src/

@@ -1,0 +1,17 @@
+{
+    "routers": [
+        {
+            "name": "UniswapV3",
+            "addr": "0x2626664c2603336E57B271c5C0b26F421741e481"
+        },
+        {
+            "name": "PancakeV3",
+            "addr": "0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86"
+        },
+        {
+            "name": "Aerodrome",
+            "addr": "0xcF77a3Ba9A5CA399B7c97c74d5496b9884956230"
+        }
+    ],
+    "aave_pool": "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"
+}

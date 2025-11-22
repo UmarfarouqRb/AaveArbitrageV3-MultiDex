@@ -1,15 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
-import {IPancakeV3Router} from "./interfaces/IPancakeV3.sol";
-import {IAerodromeRouter} from "./interfaces/IAerodrome.sol";
-import {console} from "forge-std/console.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
+import {IRouter} from "aerodrome/interfaces/IRouter.sol";
+import {ISwapRouter as IV3SwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
+import {Ownable} from "openzeppelin-contracts/access/Ownable.sol";
 
-// --- Publicly Accessible Structs & Enums ---
-enum DexType { Aerodrome, PancakeV3, UniswapV3 }
+enum DexType {
+    UniswapV3,
+    PancakeV3,
+    Aerodrome
+}
+
+struct V3Params {
+    uint24 fee;
+    uint256 amountOutMinimum;
+}
+
+struct AerodromeParams {
+    IRouter.Route[] routes;
+}
 
 struct Swap {
     address router;
@@ -19,213 +32,133 @@ struct Swap {
     bytes dexParams;
 }
 
-interface IFlashLoanReceiver {
-    function executeOperation(
-        address[] calldata assets,
-        uint256[] calldata amounts,
-        uint256[] calldata premiums,
-        address initiator,
-        bytes calldata params
-    ) external returns (bool);
-}
 
-contract AaveArbitrageV3 is IFlashLoanReceiver, Ownable {
+contract AaveArbitrageV3 is Ownable {
     using SafeERC20 for IERC20;
+    IPoolAddressesProvider public constant AAVE_ADDRESSES_PROVIDER = IPoolAddressesProvider(0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb);
+    IPool public constant AAVE_POOL = IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
+    address private constant WETH = 0x4200000000000000000000000000000000000006;
+    mapping(address => bool) public approvedRouters;
 
-    // --- Structs for DEX parameters ---
-    struct AerodromeParams {
-        bool stable;
-        address factory;
-        uint256 amountOutMin;
+    event ArbitrageExecuted(
+        address indexed token,
+        uint256 indexed flashLoanAmount,
+        uint256 profit
+    );
+
+    event Profit(
+        address indexed token,
+        uint256 amount
+    );
+
+    constructor() Ownable(msg.sender) {
+        AAVE_POOL.borrow(WETH, 1, 1, 1, address(this));
     }
 
-    struct V3Params {
-        bytes path;
-        uint256 amountOutMinimum;
+    receive() external payable {}
+
+    function setRouter(address router, bool approved) external onlyOwner {
+        approvedRouters[router] = approved;
     }
 
-    // --- State Variables ---
-    IPool public immutable POOL = IPool(0xA238Dd80C259a72e81d7e4664a9801593F98d1c5);
-    bool public paused;
-    mapping(address => bool) public whitelistedRouters;
-    uint256 public keeperFee; // Percentage of profit to pay to the keeper
-
-    // --- Events ---
-    event SwapFailed(address router, DexType dex, address tokenIn, address tokenOut, string reason);
-    event ProfitTransfer(address token, uint256 amount);
-    event KeeperFeePaid(address keeper, address token, uint256 amount);
-    event LoanRepaid(address token, uint256 amount);
-
-    // --- Modifiers ---
-    modifier whenNotPaused() {
-        require(!paused, "Contract is paused");
-        _;
+    function executeArbitrage(address flashLoanToken, uint256 flashLoanAmount, Swap[] calldata swaps) external {
+        bytes memory params = abi.encode(swaps);
+        AAVE_POOL.flashLoan(address(this),_getTokens(flashLoanToken),_getAmounts(flashLoanAmount),_getModes(),address(this),params,0);
     }
 
-    // --- Constructor ---
-    constructor(address initialOwner) Ownable(initialOwner) {
-        keeperFee = 50; // 50% keeper fee
-        whitelistedRouters[0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43] = true; // Aerodrome Router
-        whitelistedRouters[0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86] = true; // PancakeSwap V3 Router
-    }
-
-    // --- External Functions ---
-    function executeArbitrage(address _flashLoanToken, uint256 _flashLoanAmount, Swap[] calldata _swaps) external whenNotPaused {
-        address receiver = address(this);
-        address[] memory assets = new address[](1);
-        assets[0] = _flashLoanToken;
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = _flashLoanAmount;
-        uint256[] memory modes = new uint256[](1);
-        modes[0] = 0; // No debt
-        
-        // Pass the swaps and the keeper (msg.sender) to the callback
-        bytes memory params = abi.encode(_swaps, msg.sender);
-        uint16 referralCode = 0;
-
-        POOL.flashLoan(receiver, assets, amounts, modes, address(this), params, referralCode);
-    }
-
-    function executeOperation(
-        address[] calldata assets,
-        uint256[] calldata amounts,
-        uint256[] calldata premiums,
-        address /*initiator*/,
-        bytes calldata params
-    ) external override returns (bool) {
-        console.log("Executing flash loan operation...");
-        require(msg.sender == address(POOL), "Only Aave V3 Pool can call this");
-        
-        (Swap[] memory swaps, address keeper) = abi.decode(params, (Swap[], address));
-        address currentToken = assets[0];
-        uint256 currentBalance = amounts[0];
-
-        console.log("Initial balance: %d %s", currentBalance, currentToken);
-
-        for (uint i = 0; i < swaps.length; i++) {
-            Swap memory s = swaps[i];
-            console.log("Executing swap %d from %s to %s", i, s.from, s.to);
-            require(whitelistedRouters[s.router], "Router not whitelisted");
-
-            if (s.dex == DexType.Aerodrome) {
-                currentBalance = _executeAerodromeSwap(s, currentBalance);
-            } else if (s.dex == DexType.PancakeV3) {
-                currentBalance = _executePancakeV3Swap(s, currentBalance);
-            } else if (s.dex == DexType.UniswapV3) {
-                revert("UniswapV3 not implemented");
-            }
-            currentToken = s.to;
-            console.log("Balance after swap %d: %d %s", i, currentBalance, currentToken);
-        }
-
+    function executeFlashLoan(address[] calldata assets, uint256[] calldata amounts, uint256[] calldata premiums, address initiator, bytes calldata params) external returns (bool) {
+        Swap[] memory swaps = abi.decode(params, (Swap[]));
         uint256 totalDebt = amounts[0] + premiums[0];
-        uint256 finalBalance = IERC20(assets[0]).balanceOf(address(this));
-        
-        console.log("Total debt: %d", totalDebt);
-        console.log("Final balance: %d", finalBalance);
+        IERC20(assets[0]).approve(swaps[0].router, amounts[0]);
+        _executeSwaps(swaps, totalDebt);
+        uint256 profit = IERC20(assets[0]).balanceOf(address(this)) - totalDebt;
 
-        require(finalBalance >= totalDebt, "Arbitrage failed: Not enough funds to repay loan");
+        uint256 keeperFee = (profit * 5) / 100;
+        IERC20(assets[0]).safeTransfer(initiator, keeperFee);
+        IERC20(assets[0]).safeTransfer(owner(), profit - keeperFee);
+        emit ArbitrageExecuted(assets[0], amounts[0], profit);
 
-        console.log("Repaying loan...");
-        IERC20(assets[0]).approve(address(POOL), totalDebt);
-        emit LoanRepaid(assets[0], totalDebt);
-
-        uint256 profit = finalBalance - totalDebt;
-        if (profit > 0) {
-            console.log("Profit found: %d", profit);
-            
-            uint256 keeperReward = (profit * keeperFee) / 100;
-            if (keeperReward > 0) {
-                IERC20(assets[0]).safeTransfer(keeper, keeperReward);
-                emit KeeperFeePaid(keeper, assets[0], keeperReward);
-            }
-            
-            uint256 ownerProfit = profit - keeperReward;
-            IERC20(assets[0]).safeTransfer(owner(), ownerProfit);
-            emit ProfitTransfer(assets[0], ownerProfit);
-        }
+        IERC20(assets[0]).safeTransfer(address(AAVE_POOL), totalDebt);
 
         return true;
     }
 
-    // --- Internal Swap Execution ---
-    function _executeAerodromeSwap(Swap memory _swap, uint256 _amountIn) internal returns (uint256) {
-        AerodromeParams memory aeroParams = abi.decode(_swap.dexParams, (AerodromeParams));
-
-        IERC20(_swap.from).approve(_swap.router, _amountIn);
-        
-        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
-        routes[0] = IAerodromeRouter.Route({
-            from: _swap.from,
-            to: _swap.to,
-            stable: aeroParams.stable,
-            factory: aeroParams.factory
-        });
-        
-        uint256[] memory receivedAmounts;
-        try IAerodromeRouter(_swap.router).swapExactTokensForTokens(_amountIn, aeroParams.amountOutMin, routes, address(this), block.timestamp) returns (uint[] memory _receivedAmounts) {
-            receivedAmounts = _receivedAmounts;
-        } catch (bytes memory reason) {
-            string memory revertMsg = _getRevertMessage(reason);
-            emit SwapFailed(_swap.router, DexType.Aerodrome, _swap.from, _swap.to, revertMsg);
-            revert(string(abi.encodePacked("Aerodrome Call Failed: ", revertMsg)));
-        }
-        
-        return receivedAmounts[receivedAmounts.length - 1];
+    function _getTokens(address token) internal pure returns(address[] memory) {
+        address[] memory tokens = new address[](1);
+        tokens[0] = token;
+        return tokens;
     }
 
-    function _executePancakeV3Swap(Swap memory _swap, uint256 _amountIn) internal returns (uint256) {
-        V3Params memory v3Params = abi.decode(_swap.dexParams, (V3Params));
+    function _getAmounts(uint256 amount) internal pure returns(uint256[] memory) {
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amount;
+        return amounts;
+    }
 
-        IERC20(_swap.from).approve(_swap.router, _amountIn);
-        
-        IPancakeV3Router.ExactInputParams memory params = IPancakeV3Router.ExactInputParams({
-            path: v3Params.path,
+    function _getModes() internal pure returns(uint256[] memory) {
+        return new uint256[](0);
+    }
+
+    function _executeSwaps(Swap[] memory swaps, uint256 totalDebt) internal {
+        for (uint i = 0; i < swaps.length; i++) {
+            Swap memory swap = swaps[i];
+            require(approvedRouters[swap.router], "Router not approved");
+
+            if (swap.dex == DexType.UniswapV3) {
+                _uniswapV3Swap(swap, totalDebt, i, swaps.length);
+            } else if (swap.dex == DexType.PancakeV3) {
+                _pancakeV3Swap(swap, totalDebt, i, swaps.length);
+            } else if (swap.dex == DexType.Aerodrome) {
+                _aerodromeSwap(swap, totalDebt, i, swaps.length);
+            }
+        }
+    }
+
+    function _uniswapV3Swap(Swap memory swap, uint256 totalDebt, uint256 i, uint256 length) internal {
+        V3Params memory params = abi.decode(swap.dexParams, (V3Params));
+        IV3SwapRouter.ExactInputSingleParams memory swapParams = IV3SwapRouter.ExactInputSingleParams({
+            tokenIn: swap.from,
+            tokenOut: swap.to,
+            fee: params.fee,
             recipient: address(this),
-            amountIn: _amountIn,
-            amountOutMinimum: v3Params.amountOutMinimum
+            deadline: block.timestamp,
+            amountIn: IERC20(swap.from).balanceOf(address(this)),
+            amountOutMinimum: i == (length -1) ? totalDebt : params.amountOutMinimum,
+            sqrtPriceLimitX96: 0
         });
 
-        uint256 amountOut;
-        try IPancakeV3Router(_swap.router).exactInput(params) returns (uint256 _amountOut) {
-            amountOut = _amountOut;
-        } catch (bytes memory reason) {
-            string memory revertMsg = _getRevertMessage(reason);
-            emit SwapFailed(_swap.router, DexType.PancakeV3, _swap.from, _swap.to, revertMsg);
-            revert(string(abi.encodePacked("PancakeV3 Call Failed: ", revertMsg)));
-        }
-        
-        return amountOut;
-    }
-    
-    // --- Helper Functions ---
-    function _getRevertMessage(bytes memory _returnData) internal pure returns (string memory) {
-        if (_returnData.length < 68) return "No revert reason";
-        assembly { _returnData := add(_returnData, 0x04) }
-        return abi.decode(_returnData, (string));
+        IV3SwapRouter(swap.router).exactInputSingle(swapParams);
     }
 
-    // --- Admin Functions ---
-    function setKeeperFee(uint256 _newFee) external onlyOwner {
-        require(_newFee <= 50, "Fee cannot exceed 50%"); // Safety check
-        keeperFee = _newFee;
-    }
-    
-    function setRouter(address _router, bool _isWhitelisted) external onlyOwner {
-        whitelistedRouters[_router] = _isWhitelisted;
+    function _pancakeV3Swap(Swap memory swap, uint256 totalDebt, uint256 i, uint256 length) internal {
+        V3Params memory params = abi.decode(swap.dexParams, (V3Params));
+        IV3SwapRouter.ExactInputSingleParams memory swapParams = IV3SwapRouter.ExactInputSingleParams({
+            tokenIn: swap.from,
+            tokenOut: swap.to,
+            fee: params.fee,
+            recipient: address(this),
+            deadline: block.timestamp,
+            amountIn: IERC20(swap.from).balanceOf(address(this)),
+            amountOutMinimum: i == (length -1) ? totalDebt : params.amountOutMinimum,
+            sqrtPriceLimitX96: 0
+        });
+
+        IV3SwapRouter(swap.router).exactInputSingle(swapParams);
     }
 
-    function pause() external onlyOwner {
-        paused = true;
+    function _aerodromeSwap(Swap memory swap, uint256 totalDebt, uint256 i, uint256 length) internal {
+        AerodromeParams memory params = abi.decode(swap.dexParams, (AerodromeParams));
+        uint amountOutMin = i == (length -1) ? totalDebt : 0;
+        IRouter(swap.router).swapExactTokensForTokens(
+            IERC20(swap.from).balanceOf(address(this)),
+            amountOutMin,
+            params.routes,
+            address(this),
+            block.timestamp
+        );
     }
 
-    function unpause() external onlyOwner {
-        paused = false;
+    function withdraw(address token) external onlyOwner {
+        IERC20(token).transfer(owner(), IERC20(token).balanceOf(address(this)));
     }
-
-    function withdraw(address _tokenAddress) external onlyOwner {
-        IERC20(_tokenAddress).safeTransfer(owner(), IERC20(_tokenAddress).balanceOf(address(this)));
-    }
-
-    receive() external payable {}
 }

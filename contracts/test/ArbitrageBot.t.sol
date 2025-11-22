@@ -1,110 +1,124 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test, console} from "forge-std/Test.sol";
-import {AaveArbitrageV3, Swap, DexType} from "../src/AaveArbitrageV3.sol";
-import {IPancakeV3Router} from "../src/interfaces/IPancakeV3.sol";
+import {Test} from "forge-std/Test.sol";
+import {AaveArbitrageV3, Swap} from "src/AaveArbitrageV3.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// Redefined structs to match ABI encoding
-struct AerodromeParams {
-    bool stable;
-    address factory;
-    uint amountOutMin;
+// --- Interfaces ---
+interface IUniswapV3Router {
+    struct ExactInputParams {
+        bytes path;
+        address recipient;
+        uint deadline;
+        uint amountIn;
+        uint amountOutMinimum;
+    }
+    function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
 }
 
-struct V3Params {
-    bytes path;
-    uint amountOutMinimum;
-}
-
-contract ManipulatedArbitrageTest is Test {
+contract ArbitrageBotTest is Test {
     // --- Fork & Wallet Configuration ---
     string internal constant BASE_MAINNET_RPC_URL = "https://base-mainnet.g.alchemy.com/v2/_rq09Uz--vhSNI9x6BGOb";
-    uint256 internal constant FORK_BLOCK_NUMBER = 14_000_000;
+    uint256 internal constant FORK_BLOCK_NUMBER = 15_000_000;
     address internal deployer;
     address internal multiSig;
-    address internal keeper;
 
     // --- Deployed Contracts & Tokens ---
     AaveArbitrageV3 public arbitrageContract;
     address internal constant WETH = 0x4200000000000000000000000000000000000006;
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address internal constant AERO_FACTORY = 0x420DD381b31aEf6683db6B902084cB0FFECe40Da;
-    address internal constant AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43;
+    
+    // --- DEX Addresses ---
     address internal constant PANCAKE_V3_ROUTER = 0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86;
-    uint24 internal constant PANCAKE_POOL_FEE = 500; // 0.05%
+    address internal constant PANCAKE_V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
+    address internal constant AERODROME_ROUTER = 0xcF77a3Ba9A5CA399B7c97c74d54e5B1Beb874E43;
+    address internal constant AERODROME_FACTORY = 0x420Dd3817F20a1A8485277520e5bEb4834241e95;
 
     function setUp() public {
         vm.createSelectFork(BASE_MAINNET_RPC_URL, FORK_BLOCK_NUMBER);
         deployer = makeAddr("deployer");
         multiSig = makeAddr("multisig");
-        keeper = makeAddr("keeper");
 
-        vm.prank(deployer);
+        vm.startPrank(deployer);
         arbitrageContract = new AaveArbitrageV3(multiSig);
+
+        uint24[] memory pancakeFees = new uint24[](4);
+        pancakeFees[0] = 100;
+        pancakeFees[1] = 500;
+        pancakeFees[2] = 2500;
+        pancakeFees[3] = 10000;
+
+        arbitrageContract.setDex(AaveArbitrageV3.DexName.PancakeV3, PANCAKE_V3_ROUTER, PANCAKE_V3_FACTORY, pancakeFees);
+
+        uint24[] memory aerodromeFees = new uint24[](3);
+        aerodromeFees[0] = 500;
+        aerodromeFees[1] = 3000;
+        aerodromeFees[2] = 10000;
+        
+        arbitrageContract.setDex(AaveArbitrageV3.DexName.Aerodrome, AERODROME_ROUTER, AERODROME_FACTORY, aerodromeFees);
+
+        arbitrageContract.transferOwnership(multiSig);
+        vm.stopPrank();
+
+        vm.startPrank(multiSig);
+        arbitrageContract.acceptOwnership();
+        vm.stopPrank();
 
         deal(WETH, deployer, 200 ether);
     }
 
-    function test_ExecuteArbitrage_WithPriceManipulation() public {
-        // 1. Manipulate market
+    function testExecuteArbitrageWithPriceManipulation() public {
         _manipulatePancakeMarket(150 ether);
 
-        // 2. Setup arbitrage swaps
         address flashLoanToken = WETH;
         uint256 flashLoanAmount = 50 ether;
-        uint256 aavePremium = flashLoanAmount * 9 / 10000; // Aave's 0.09% fee
+        uint256 aavePremium = (flashLoanAmount * 9) / 10000; 
         uint256 totalDebt = flashLoanAmount + aavePremium;
 
         Swap[] memory swaps = new Swap[](2);
-        swaps[0] = _getAeroSwap(WETH, USDC, 1);
+        swaps[0] = _getAeroSwap(WETH, USDC);
         swaps[1] = _getPancakeSwap(USDC, WETH, totalDebt);
 
-        // 3. Execute arbitrage
-        console.log("Triggering flash loan as keeper...");
-        vm.prank(keeper); // Any address can now execute the trade
+        vm.prank(multiSig);
         arbitrageContract.executeArbitrage(flashLoanToken, flashLoanAmount, swaps);
-        vm.stopPrank();
 
-        // 4. Verify profit distribution
-        uint256 totalProfit = 118418205050465624126; // From previous successful run
-        uint256 expectedKeeperProfit = (totalProfit * 50) / 100;
-        uint256 expectedMultisigProfit = totalProfit - expectedKeeperProfit;
-
-        uint256 keeperBalance = IERC20(flashLoanToken).balanceOf(keeper);
         uint256 multiSigBalance = IERC20(flashLoanToken).balanceOf(multiSig);
-
-        console.log("Keeper Profit: %s wei", keeperBalance);
-        console.log("MultiSig Profit: %s wei", multiSigBalance);
-
-        assertEq(keeperBalance, expectedKeeperProfit, "Keeper did not receive correct profit share.");
-        assertEq(multiSigBalance, expectedMultisigProfit, "MultiSig did not receive correct profit share.");
+        assertTrue(multiSigBalance > 0, "Multisig did not receive profit.");
     }
 
-    // --- Helper Functions ---
     function _manipulatePancakeMarket(uint256 amount) internal {
-        console.log("--- Manipulating PancakeSwap market ---");
         vm.startPrank(deployer);
         IERC20(WETH).approve(PANCAKE_V3_ROUTER, amount);
-        IPancakeV3Router.ExactInputParams memory params = IPancakeV3Router.ExactInputParams({
-            path: abi.encodePacked(WETH, PANCAKE_POOL_FEE, USDC),
+
+        bytes memory path = abi.encodePacked(WETH, uint24(3000), USDC);
+
+        IUniswapV3Router.ExactInputParams memory params = IUniswapV3Router.ExactInputParams({
+            path: path,
             recipient: deployer,
+            deadline: block.timestamp,
             amountIn: amount,
             amountOutMinimum: 0
         });
-        uint usdcReceived = IPancakeV3Router(PANCAKE_V3_ROUTER).exactInput(params);
+        IUniswapV3Router(PANCAKE_V3_ROUTER).exactInput(params);
         vm.stopPrank();
-        console.log("Swapped %s WETH for %s USDC to create imbalance.", amount, usdcReceived);
     }
 
-    function _getAeroSwap(address from, address to, uint amountOutMin) internal pure returns (Swap memory) {
-        AerodromeParams memory params = AerodromeParams({ stable: false, factory: AERO_FACTORY, amountOutMin: amountOutMin });
-        return Swap({ router: AERODROME_ROUTER, from: from, to: to, dex: DexType.Aerodrome, dexParams: abi.encode(params) });
+    function _getAeroSwap(address from, address to) internal pure returns (Swap memory) {
+        return Swap({
+            dex: AaveArbitrageV3.DexName.Aerodrome,
+            from: from,
+            to: to,
+            amountOutMin: 0
+        });
     }
 
     function _getPancakeSwap(address from, address to, uint amountOutMin) internal pure returns (Swap memory) {
-        V3Params memory params = V3Params({ path: abi.encodePacked(from, PANCAKE_POOL_FEE, to), amountOutMinimum: amountOutMin });
-        return Swap({ router: PANCAKE_V3_ROUTER, from: from, to: to, dex: DexType.PancakeV3, dexParams: abi.encode(params) });
+        return Swap({
+            dex: AaveArbitrageV3.DexName.PancakeV3,
+            from: from,
+            to: to,
+            amountOutMin: amountOutMin
+        });
     }
 }

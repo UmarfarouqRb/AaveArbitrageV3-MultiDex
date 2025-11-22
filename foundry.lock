@@ -5,6 +5,12 @@
       "rev": "b74526a7bc67a3a117a1963fc871b3eb8cea8435"
     }
   },
+  "lib/contracts": {
+    "branch": {
+      "name": "main",
+      "rev": "a4fe56813c9e64907038f447a7358f83ec32dc14"
+    }
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.11.0",
@@ -15,6 +21,27 @@
     "tag": {
       "name": "v5.5.0",
       "rev": "fcbae5394ae8ad52d8e580a3477db99814b9d565"
+    }
+  },
+  "lib/pancake-smart-contracts": {
+    "rev": "cb079908a30328e46d42fe8cc77b9f7d38a15c2f"
+  },
+  "lib/pancake-swap-sdk": {
+    "rev": "38b00a59d8ff04bac61d0d12fa9b94af80808392"
+  },
+  "lib/pancake-v3-contracts": {
+    "rev": "5cc479f0c5a98966c74d94700057b8c3ca629afd"
+  },
+  "lib/v3-core": {
+    "tag": {
+      "name": "v1.0.0",
+      "rev": "e3589b192d0be27e100cd0daaf6c97204fdb1899"
+    }
+  },
+  "lib/v3-periphery": {
+    "tag": {
+      "name": "v1.3.0",
+      "rev": "80f26c86c57b8a5e4b913f42844d4c8bd274d058"
     }
   }
 }
