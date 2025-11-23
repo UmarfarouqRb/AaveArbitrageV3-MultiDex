@@ -1,17 +1,12 @@
 [profile.default]
 src = 'contracts/src'
 out = 'out'
-libs = ['lib']
+libs = ['node_modules', 'lib', 'v3-periphery']
 test = 'contracts/test'
-cache_path = 'cache_forge'
-via_ir = true
-fs_permissions = [{ access = "read", path = "./router-config.json"}]
+cache_path  = 'cache_forge'
 
 [rpc_endpoints]
-base = "https://mainnet.base.org"
+base = "https://base.publicnode.com"
 
-[etherscan]
-base = { key = "${BASESCAN_API_KEY}" }
-
-[profile.ci]
-fuzz = { runs = 10000 }
+[profile.swift]
+output_path = "swift/"

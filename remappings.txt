@@ -4,6 +4,6 @@ src/=contracts/src/
 @uniswap/v3-core/=lib/v3-core/
 pancake-v3-contracts/=lib/pancake-v3-contracts/projects/v3-periphery/contracts/
 v3-periphery/=lib/v3-periphery/contracts/
-openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 aerodrome/=lib/contracts/contracts/
 forge-std/=lib/forge-std/src/
