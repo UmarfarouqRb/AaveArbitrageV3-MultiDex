@@ -9,10 +9,12 @@ import {MultiV3Executor, Swap} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
-    IPool public constant LENDING_POOL = IPool(0x794a61358D6845594F94dc1DB02A252b5b4814aD);
+    IPool public LENDING_POOL;
     uint16 public keeperFeeBps = 1000;
 
-    constructor(address _owner) MultiV3Executor(_owner) {}
+    constructor(address _owner, address _poolAddress) MultiV3Executor(_owner) {
+        LENDING_POOL = IPool(_poolAddress);
+    }
 
     function ADDRESSES_PROVIDER() public view override returns (IPoolAddressesProvider) {
         return LENDING_POOL.ADDRESSES_PROVIDER();
@@ -28,7 +30,7 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
         Swap[] memory _swaps
     ) external {
         require(_swaps.length > 0, "No swaps");
-        bytes memory params = abi.encode(_swaps);
+        bytes memory params = abi.encode(msg.sender, _swaps);
 
         LENDING_POOL.flashLoanSimple(
             address(this),
@@ -48,15 +50,17 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
     ) external override returns (bool) {
         require(msg.sender == address(LENDING_POOL), "Non-lending pool");
 
-        Swap[] memory swaps = abi.decode(params, (Swap[]));
+        (address keeper, Swap[] memory swaps) = abi.decode(params, (address, Swap[]));
 
         _executeSwaps(swaps, amount);
 
-        uint256 profit = IERC20(asset).balanceOf(address(this)) - amount;
-
-        _distributeProfit(profit, asset);
-
         uint256 amountToReturn = amount + premium;
+        uint256 currentBalance = IERC20(asset).balanceOf(address(this));
+        require(currentBalance > amountToReturn, "No profit made");
+        uint256 profit = currentBalance - amountToReturn;
+
+        _distributeProfit(profit, asset, keeper);
+
         approveToken(asset, address(LENDING_POOL), amountToReturn);
 
         return true;
@@ -66,9 +70,13 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
         keeperFeeBps = _fee;
     }
 
-    function _distributeProfit(uint256 _profit, address _asset) internal {
+    function setPool(address _newPool) external onlyOwner {
+        LENDING_POOL = IPool(_newPool);
+    }
+
+    function _distributeProfit(uint256 _profit, address _asset, address _keeper) internal {
         uint256 keeperAmount = (_profit * keeperFeeBps) / 10000;
-        IERC20(_asset).transfer(msg.sender, keeperAmount);
+        IERC20(_asset).transfer(_keeper, keeperAmount);
         IERC20(_asset).transfer(owner(), _profit - keeperAmount);
     }
 

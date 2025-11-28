@@ -12,32 +12,37 @@ contract SwapTest is Test {
     address public keeper = makeAddr("keeper");
     address public deployer = makeAddr("deployer");
 
-    // Base Mainnet
-    address public constant WETH = 0x4200000000000000000000000000000000000006;
-    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    // Ethereum Mainnet
+    address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address public constant AAVE_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
 
-    // Uniswap V3 on Base
-    address public constant UNISWAP_V3_ROUTER = 0x2626664c2603336E57B271c5C0b26F421741e481;
-    address public constant UNISWAP_V3_WETH_USDC_POOL = 0x3951Ea9b1932315522533899C4145c804576392d;
+    // Uniswap V3 on Ethereum
+    address public constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public constant UNISWAP_V3_WETH_USDC_POOL = 0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640;
 
     function setUp() public {
         vm.prank(deployer);
-        arbitrage = new AaveArbitrageV3(owner);
+        arbitrage = new AaveArbitrageV3(owner, AAVE_POOL);
     }
 
-    function test_SingleSwap() public {
+    function test_SingleSwapUniswapV3() public {
         uint256 amountIn = 1 * 1e18;
         deal(WETH, address(arbitrage), amountIn);
 
         Swap[] memory swaps = new Swap[](1);
+        address[] memory pools = new address[](1);
+        pools[0] = UNISWAP_V3_WETH_USDC_POOL;
+
         swaps[0] = Swap({
             router: UNISWAP_V3_ROUTER,
-            pool: UNISWAP_V3_WETH_USDC_POOL,
+            pools: pools,
             tokenIn: WETH,
             tokenOut: USDC,
             dexType: DexType.UniswapV3,
             amountIn: amountIn,
-            amountOut: 0
+            amountOut: 0,
+            factory: address(0)
         });
 
         arbitrage._executeSwaps(swaps, amountIn);
