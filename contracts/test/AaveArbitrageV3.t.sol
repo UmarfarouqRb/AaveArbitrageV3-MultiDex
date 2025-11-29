@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {AaveArbitrageV3} from "src/AaveArbitrageV3.sol";
-import {MultiV3Executor, Swap, DexType} from "src/MultiV3Executor.sol";
+import {Swap, DexType} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 

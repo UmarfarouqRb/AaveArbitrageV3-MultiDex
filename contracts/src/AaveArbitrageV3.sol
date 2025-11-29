@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import {IFlashLoanSimpleReceiver} from "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
@@ -76,11 +75,11 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
 
     function _distributeProfit(uint256 _profit, address _asset, address _keeper) internal {
         uint256 keeperAmount = (_profit * keeperFeeBps) / 10000;
-        IERC20(_asset).transfer(_keeper, keeperAmount);
-        IERC20(_asset).transfer(owner(), _profit - keeperAmount);
+        require(IERC20(_asset).transfer(_keeper, keeperAmount));
+        require(IERC20(_asset).transfer(owner(), _profit - keeperAmount));
     }
 
     function withdraw(address _token, address _to) external onlyOwner {
-        IERC20(_token).transfer(_to, IERC20(_token).balanceOf(address(this)));
+        require(IERC20(_token).transfer(_to, IERC20(_token).balanceOf(address(this))));
     }
 }
