@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 import {IFlashLoanSimpleReceiver} from "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
-import {MultiV3Executor, Swap} from "src/MultiV3Executor.sol";
+import {MultiV3Executor, SwapV2, SwapV3} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
@@ -26,17 +26,18 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
     function executeArbitrage(
         address asset,
         uint256 amount,
-        Swap[] memory _swaps
+        SwapV3[] memory _swapsV3,
+        SwapV2[] memory _swapsV2
     ) external {
-        require(_swaps.length > 0, "No swaps");
-        bytes memory params = abi.encode(msg.sender, _swaps);
+        require(_swapsV3.length > 0 || _swapsV2.length > 0, "No swaps");
+        bytes memory params = abi.encode(msg.sender, _swapsV3, _swapsV2);
 
         LENDING_POOL.flashLoanSimple(
             address(this),
             asset,
             amount,
             params,
-            0 // referralCode
+            0
         );
     }
 
@@ -49,9 +50,15 @@ contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
     ) external override returns (bool) {
         require(msg.sender == address(LENDING_POOL), "Non-lending pool");
 
-        (address keeper, Swap[] memory swaps) = abi.decode(params, (address, Swap[]));
+        (address keeper, SwapV3[] memory swapsV3, SwapV2[] memory swapsV2) = abi.decode(params, (address, SwapV3[], SwapV2[]));
 
-        _executeSwaps(swaps, amount);
+        uint256 nextAmountIn = amount;
+        if (swapsV3.length > 0) {
+            nextAmountIn = _executeV3Swaps(swapsV3, nextAmountIn);
+        }
+        if (swapsV2.length > 0) {
+            nextAmountIn = _executeV2Swaps(swapsV2, nextAmountIn);
+        }
 
         uint256 amountToReturn = amount + premium;
         uint256 currentBalance = IERC20(asset).balanceOf(address(this));

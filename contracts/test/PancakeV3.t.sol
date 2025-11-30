@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {MultiV3Executor, Swap, DexType} from "../src/MultiV3Executor.sol";
+import {MultiV3Executor, SwapV3, DexV3Type} from "../src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPancakeV3Factory} from "pancake-v3-core/interfaces/IPancakeV3Factory.sol";
 
@@ -34,22 +34,19 @@ contract PancakeV3Test is Test {
         address expectedPool = IPancakeV3Factory(PANCAKE_V3_FACTORY).getPool(WETH, USDC, WETH_USDC_FEE_PANCAKE);
         assertTrue(expectedPool != address(0), "Pool does not exist");
 
-        Swap[] memory swaps = new Swap[](1);
-        address[] memory pools = new address[](1);
-        pools[0] = expectedPool;
+        SwapV3[] memory swaps = new SwapV3[](1);
 
-        swaps[0] = Swap({
+        swaps[0] = SwapV3({
             router: PANCAKE_V3_ROUTER,
-            pools: pools,
+            pool: expectedPool,
             tokenIn: WETH,
             tokenOut: USDC,
-            dexType: DexType.PancakeV3,
+            dexType: DexV3Type.PancakeV3,
             amountIn: amountIn,
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0
         });
 
-        executor._executeSwaps(swaps, amountIn);
+        executor._executeV3Swaps(swaps, amountIn);
 
         uint256 usdcBalance = IERC20(USDC).balanceOf(address(executor));
         assertTrue(usdcBalance > 0, "USDC balance should be greater than 0");
@@ -59,39 +56,32 @@ contract PancakeV3Test is Test {
         uint256 amountIn = 1 * 1e18;
         deal(WETH, address(executor), amountIn);
 
-        Swap[] memory swaps = new Swap[](2);
-        address[] memory pools1 = new address[](1);
-        pools1[0] = UNISWAP_V3_WETH_USDC_POOL;
+        SwapV3[] memory swaps = new SwapV3[](2);
 
-        swaps[0] = Swap({
+        swaps[0] = SwapV3({
             router: UNISWAP_V3_ROUTER,
-            pools: pools1,
+            pool: UNISWAP_V3_WETH_USDC_POOL,
             tokenIn: WETH,
             tokenOut: USDC,
-            dexType: DexType.UniswapV3,
+            dexType: DexV3Type.UniswapV3,
             amountIn: amountIn,
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0
         });
 
         address expectedPancakePool = IPancakeV3Factory(PANCAKE_V3_FACTORY).getPool(USDC, WETH, WETH_USDC_FEE_PANCAKE);
         assertTrue(expectedPancakePool != address(0), "Pancake pool does not exist");
 
-        address[] memory pools2 = new address[](1);
-        pools2[0] = expectedPancakePool;
-
-        swaps[1] = Swap({
+        swaps[1] = SwapV3({
             router: PANCAKE_V3_ROUTER,
-            pools: pools2,
+            pool: expectedPancakePool,
             tokenIn: USDC,
             tokenOut: WETH,
-            dexType: DexType.PancakeV3,
+            dexType: DexV3Type.PancakeV3,
             amountIn: 0, // Amount in is the output of the previous swap
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0
         });
 
-        executor._executeSwaps(swaps, amountIn);
+        executor._executeV3Swaps(swaps, amountIn);
 
         uint256 wethBalance = IERC20(WETH).balanceOf(address(executor));
         assertTrue(wethBalance > 0, "WETH balance should be greater than 0");

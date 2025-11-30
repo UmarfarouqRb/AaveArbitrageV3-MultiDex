@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {AaveArbitrageV3} from "src/AaveArbitrageV3.sol";
-import {Swap, DexType} from "src/MultiV3Executor.sol";
+import {SwapV2, SwapV3, DexV3Type} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -36,33 +36,36 @@ contract AaveArbitrageV3Test is Test {
         uint256 fakeProfit = 30_000 * 1e6;
         deal(USDC, address(arbitrage), fakeProfit);
 
-        Swap[] memory swaps = new Swap[](2);
-        address[] memory pools = new address[](1);
-        pools[0] = UNISWAP_V3_WETH_USDC_POOL;
+        SwapV3[] memory swapsV3 = new SwapV3[](2);
 
-        swaps[0] = Swap({
+        swapsV3[0] = SwapV3({
             router: UNISWAP_V3_ROUTER,
-            pools: pools,
+            pool: UNISWAP_V3_WETH_USDC_POOL,
             tokenIn: USDC,
             tokenOut: WETH,
-            dexType: DexType.UniswapV3,
             amountIn: flashLoanAmount,
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0,
+            dexType: DexV3Type.UniswapV3
         });
-        swaps[1] = Swap({
+        swapsV3[1] = SwapV3({
             router: UNISWAP_V3_ROUTER,
-            pools: pools,
+            pool: UNISWAP_V3_WETH_USDC_POOL,
             tokenIn: WETH,
             tokenOut: USDC,
-            dexType: DexType.UniswapV3,
             amountIn: 0,
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0,
+            dexType: DexV3Type.UniswapV3
         });
 
+        SwapV2[] memory swapsV2 = new SwapV2[](0);
+
         vm.prank(keeper);
-        arbitrage.executeArbitrage(flashLoanToken, flashLoanAmount, swaps);
+        arbitrage.executeArbitrage(
+            flashLoanToken,
+            flashLoanAmount,
+            swapsV3,
+            swapsV2
+        );
 
         assertTrue(IERC20(USDC).balanceOf(keeper) > 0);
         assertTrue(IERC20(USDC).balanceOf(owner) > 0);

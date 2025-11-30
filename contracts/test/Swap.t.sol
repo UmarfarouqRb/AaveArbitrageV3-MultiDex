@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {AaveArbitrageV3} from "src/AaveArbitrageV3.sol";
-import {Swap, DexType} from "src/MultiV3Executor.sol";
+import {SwapV3, DexV3Type} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract SwapTest is Test {
@@ -30,22 +30,19 @@ contract SwapTest is Test {
         uint256 amountIn = 1 * 1e18;
         deal(WETH, address(arbitrage), amountIn);
 
-        Swap[] memory swaps = new Swap[](1);
-        address[] memory pools = new address[](1);
-        pools[0] = UNISWAP_V3_WETH_USDC_POOL;
+        SwapV3[] memory swaps = new SwapV3[](1);
 
-        swaps[0] = Swap({
+        swaps[0] = SwapV3({
             router: UNISWAP_V3_ROUTER,
-            pools: pools,
+            pool: UNISWAP_V3_WETH_USDC_POOL,
             tokenIn: WETH,
             tokenOut: USDC,
-            dexType: DexType.UniswapV3,
+            dexType: DexV3Type.UniswapV3,
             amountIn: amountIn,
-            amountOut: 0,
-            factory: address(0)
+            amountOutMin: 0
         });
 
-        arbitrage._executeSwaps(swaps, amountIn);
+        arbitrage._executeV3Swaps(swaps, amountIn);
 
         uint256 usdcBalance = IERC20(USDC).balanceOf(address(arbitrage));
         assertTrue(usdcBalance > 0, "USDC balance should be greater than 0");
