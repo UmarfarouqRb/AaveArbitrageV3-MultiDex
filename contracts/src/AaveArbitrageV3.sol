@@ -1,92 +1,133 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
-import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
-import {IFlashLoanSimpleReceiver} from "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanSimpleReceiver.sol";
-import {MultiV3Executor, SwapV2, SwapV3} from "src/MultiV3Executor.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IPool as IAaveV3Pool, IPoolAddressesProvider} from "aave-v3-core/contracts/interfaces/IPool.sol";
+import {FlashLoanSimpleReceiverBase} from "aave-v3-core/contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol";
+import {ISwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
+import {IUniswapV2Router02 as IUniswapV2Router} from "v2-periphery/interfaces/IUniswapV2Router02.sol";
 
-contract AaveArbitrageV3 is IFlashLoanSimpleReceiver, MultiV3Executor {
-    IPool public LENDING_POOL;
-    uint16 public keeperFeeBps = 1000;
+import {MultiV3Executor, SwapV3, SwapV2} from "./MultiV3Executor.sol";
 
-    constructor(address _owner, address _poolAddress) MultiV3Executor(_owner) {
-        LENDING_POOL = IPool(_poolAddress);
+enum SwapResult {
+    SUCCESS,
+    INSUFFICIENT_PROFIT,
+    SWAP_FAILED
+}
+
+contract AaveArbitrageV3 is FlashLoanSimpleReceiverBase, Ownable {
+    using SafeERC20 for IERC20;
+
+    MultiV3Executor internal immutable executor;
+    address public keeper;
+    uint256 public keeperFee;
+
+    error InvalidLoanAmount();
+    error NotKeeper();
+    error LoanNotInitiated();
+    error InsufficientProfit();
+
+    event ProfitDistribution(address indexed keeper, uint256 keeperAmount, uint256 ownerAmount);
+    event ArbitrageExecuted(SwapResult result, uint256 profit);
+
+    modifier onlyKeeper() {
+        if (msg.sender != keeper) {
+            revert NotKeeper();
+        }
+        _;
     }
 
-    function ADDRESSES_PROVIDER() public view override returns (IPoolAddressesProvider) {
-        return LENDING_POOL.ADDRESSES_PROVIDER();
-    }
-
-    function POOL() public view override returns (IPool) {
-        return LENDING_POOL;
+    constructor(
+        IPoolAddressesProvider _aavePoolAddressProvider,
+        address payable _executor,
+        address _owner,
+        address _keeper
+    ) FlashLoanSimpleReceiverBase(_aavePoolAddressProvider) Ownable(_owner) {
+        executor = MultiV3Executor(_executor);
+        keeper = _keeper;
+        keeperFee = 500; // 5%
     }
 
     function executeArbitrage(
-        address asset,
-        uint256 amount,
-        SwapV3[] memory _swapsV3,
-        SwapV2[] memory _swapsV2
-    ) external {
-        require(_swapsV3.length > 0 || _swapsV2.length > 0, "No swaps");
-        bytes memory params = abi.encode(msg.sender, _swapsV3, _swapsV2);
+        address _asset,
+        uint256 _amount,
+        SwapV3[] calldata _swapsV3,
+        SwapV2[] calldata _swapsV2
+    ) external onlyKeeper {
+        if (_amount == 0) {
+            revert InvalidLoanAmount();
+        }
 
-        LENDING_POOL.flashLoanSimple(
-            address(this),
-            asset,
-            amount,
-            params,
-            0
-        );
+        bytes memory params = abi.encode(_swapsV3, _swapsV2, msg.sender);
+        uint16 referralCode = 0;
+
+        POOL.flashLoanSimple(address(this), _asset, _amount, params, referralCode);
     }
 
     function executeOperation(
         address asset,
         uint256 amount,
         uint256 premium,
-        address,
+        address initiator,
         bytes calldata params
     ) external override returns (bool) {
-        require(msg.sender == address(LENDING_POOL), "Non-lending pool");
-
-        (address keeper, SwapV3[] memory swapsV3, SwapV2[] memory swapsV2) = abi.decode(params, (address, SwapV3[], SwapV2[]));
-
-        uint256 nextAmountIn = amount;
-        if (swapsV3.length > 0) {
-            nextAmountIn = _executeV3Swaps(swapsV3, nextAmountIn);
-        }
-        if (swapsV2.length > 0) {
-            nextAmountIn = _executeV2Swaps(swapsV2, nextAmountIn);
+        if (initiator != address(this)) {
+            revert LoanNotInitiated();
         }
 
-        uint256 amountToReturn = amount + premium;
-        uint256 currentBalance = IERC20(asset).balanceOf(address(this));
-        require(currentBalance > amountToReturn, "No profit made");
-        uint256 profit = currentBalance - amountToReturn;
+        (SwapV3[] memory swapsV3, SwapV2[] memory swapsV2, ) = abi.decode(params, (SwapV3[], SwapV2[], address));
 
-        _distributeProfit(profit, asset, keeper);
+        uint256 initialBalance = IERC20(asset).balanceOf(address(this));
 
-        approveToken(asset, address(LENDING_POOL), amountToReturn);
+        executor.executeV3Swaps(swapsV3, amount);
+        executor.executeV2Swaps(swapsV2, 0);
 
+        uint256 finalBalance = IERC20(asset).balanceOf(address(this));
+        uint256 profit = finalBalance - initialBalance;
+
+        if (profit < premium) {
+            emit ArbitrageExecuted(SwapResult.INSUFFICIENT_PROFIT, profit);
+            revert InsufficientProfit();
+        }
+
+        distributeProfit(asset, profit, premium);
         return true;
     }
 
-    function setKeeperFee(uint16 _fee) external onlyOwner {
-        keeperFeeBps = _fee;
+    function distributeProfit(address _asset, uint256 _profit, uint256 _premium) internal {
+        uint256 totalRepayAmount = _profit + _premium;
+        uint256 netProfit = _profit - _premium;
+
+        uint256 keeperAmount = (netProfit * keeperFee) / 10000;
+        uint256 ownerAmount = netProfit - keeperAmount;
+
+        IERC20(_asset).approve(address(POOL), totalRepayAmount);
+
+        if (keeperAmount > 0) {
+            IERC20(_asset).safeTransfer(keeper, keeperAmount);
+        }
+        if (ownerAmount > 0) {
+            IERC20(_asset).safeTransfer(owner(), ownerAmount);
+        }
+
+        emit ProfitDistribution(keeper, keeperAmount, ownerAmount);
     }
 
-    function setPool(address _newPool) external onlyOwner {
-        LENDING_POOL = IPool(_newPool);
+    function setKeeper(address _newKeeper) external onlyOwner {
+        keeper = _newKeeper;
     }
 
-    function _distributeProfit(uint256 _profit, address _asset, address _keeper) internal {
-        uint256 keeperAmount = (_profit * keeperFeeBps) / 10000;
-        require(IERC20(_asset).transfer(_keeper, keeperAmount));
-        require(IERC20(_asset).transfer(owner(), _profit - keeperAmount));
+    function setKeeperFee(uint256 _newFee) external onlyOwner {
+        keeperFee = _newFee;
     }
 
-    function withdraw(address _token, address _to) external onlyOwner {
-        require(IERC20(_token).transfer(_to, IERC20(_token).balanceOf(address(this))));
+    function withdraw(address _token) external onlyOwner {
+        if (_token == address(0)) {
+            payable(owner()).transfer(address(this).balance);
+            return;
+        }
+        IERC20(_token).safeTransfer(owner(), IERC20(_token).balanceOf(address(this)));
     }
 }

@@ -1,58 +1,87 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Test.sol";
-import "contracts/src/MultiV3Executor.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {MultiV3Executor, SwapV2, DexV2Type} from "src/MultiV3Executor.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Constants} from "./Constants.sol";
 
-contract UniswapV2Test is Test {
-    MultiV3Executor executor;
-
-    address internal constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-    address internal constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address internal constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-
-    address internal constant UNISWAP_V2_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-    address internal constant SUSHISWAP_V2_ROUTER = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
+contract UniswapV2Test is Test, Constants {
+    MultiV3Executor public executor;
+    address public owner = 0x7c8999dC9a822c1f0Df42023113EDB4FDd543266;
 
     function setUp() public {
-        executor = new MultiV3Executor(address(this));
+        vm.createSelectFork("https://mainnet.base.org");
+        executor = new MultiV3Executor(owner);
+    }
+
+    function test_BaseUniswapV2Swap() public {
+        uint256 amountIn = 1_000_000_000; // 1000 USDC
+        deal(USDC, address(this), amountIn);
+        IERC20(USDC).transfer(address(executor), amountIn);
+
+        address[] memory path = new address[](2);
+        path[0] = USDC;
+        path[1] = WETH;
+
+        SwapV2[] memory swaps = new SwapV2[](1);
+        swaps[0] = SwapV2({
+            router: UNISWAP_V2_ROUTER,
+            path: path,
+            amountIn: amountIn,
+            amountOutMin: 0,
+            dexType: DexV2Type.UniswapV2,
+            data: bytes("")
+        });
+
+        uint256 wethBalanceBefore = IERC20(WETH).balanceOf(address(executor));
+        executor.executeV2Swaps(swaps, amountIn);
+        uint256 wethBalanceAfter = IERC20(WETH).balanceOf(address(executor));
+
+        assertGt(wethBalanceAfter, wethBalanceBefore, "WETH balance should have increased after swap");
     }
 
     function test_MultiDexV2Swaps() public {
-        uint256 amountIn = 1000 * 1e6; // 1000 USDC
-        deal(USDC, address(executor), amountIn);
-
-        SwapV2[] memory swaps = new SwapV2[](2);
+        uint256 amountIn = 1_000_000_000; // 1000 USDC
+        deal(USDC, address(this), amountIn);
+        IERC20(USDC).transfer(address(executor), amountIn);
 
         address[] memory path1 = new address[](2);
         path1[0] = USDC;
         path1[1] = WETH;
-        swaps[0] = SwapV2({
-            router: UNISWAP_V2_ROUTER,
-            path: path1,
-            amountIn: amountIn,
-            amountOutMin: 0,
-            dexType: DexV2Type.UniswapV2
-        });
+
+        bool[] memory stable = new bool[](1);
+        stable[0] = false;
+
+        bytes memory routeData = abi.encode(path1, stable, AERODROME_FACTORY);
 
         address[] memory path2 = new address[](2);
         path2[0] = WETH;
         path2[1] = DAI;
-        swaps[1] = SwapV2({
-            router: SUSHISWAP_V2_ROUTER,
-            path: path2,
-            amountIn: 0, // Chained from previous swap
+
+        SwapV2[] memory swaps = new SwapV2[](2);
+        swaps[0] = SwapV2({
+            router: AERODROME_ROUTER,
+            path: path1,
+            amountIn: amountIn,
             amountOutMin: 0,
-            dexType: DexV2Type.SushiV2
+            dexType: DexV2Type.AerodromeV2,
+            data: routeData
         });
 
-        uint256 initialExecutorBalance = IERC20(USDC).balanceOf(address(executor));
+        swaps[1] = SwapV2({
+            router: UNISWAP_V2_ROUTER,
+            path: path2,
+            amountIn: 0, // Amount in is dynamic
+            amountOutMin: 0,
+            dexType: DexV2Type.UniswapV2,
+            data: bytes("")
+        });
 
-        // Execute the swaps
-        uint256 finalAmount = executor._executeV2Swaps(swaps, initialExecutorBalance);
+        uint256 daiBalanceBefore = IERC20(DAI).balanceOf(address(executor));
+        executor.executeV2Swaps(swaps, amountIn);
+        uint256 daiBalanceAfter = IERC20(DAI).balanceOf(address(executor));
 
-        assertTrue(finalAmount > 0, "Final amount is not greater than 0");
-        assertEq(IERC20(DAI).balanceOf(address(executor)), finalAmount, "Final DAI balance mismatch");
+        assertGt(daiBalanceAfter, daiBalanceBefore, "DAI balance should have increased after swaps");
     }
 }

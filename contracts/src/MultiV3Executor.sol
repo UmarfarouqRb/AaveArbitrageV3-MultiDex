@@ -1,13 +1,35 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ISwapRouter as IUniswapV3SwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
-import {ISwapRouter as IPancakeV3SwapRouter} from "pancake-v3-periphery/interfaces/ISwapRouter.sol";
-import {IUniswapV3Pool} from "lib/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import {IUniswapV2Router} from "contracts/interfaces/IUniswapV2Router.sol";
-import "forge-std/console.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IQuoterV2} from "v3-periphery/interfaces/IQuoterV2.sol";
+import {ISwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
+import {IUniswapV2Router02 as IUniswapV2Router} from "v2-periphery/interfaces/IUniswapV2Router02.sol";
+import {IPancakeV3Pool} from "pancake-v3-core/interfaces/IPancakeV3Pool.sol";
+
+
+struct Route {
+    address from;
+    address to;
+    bool stable;
+    address factory;
+}
+
+interface IAerodromeRouter {
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        Route[] calldata routes,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
+
+    function getAmountsOut(uint amountIn, Route[] calldata routes) external view returns (uint[] memory amounts);
+}
+
+
 
 enum DexV3Type {
     UniswapV3,
@@ -16,10 +38,7 @@ enum DexV3Type {
 
 enum DexV2Type {
     UniswapV2,
-    PancakeSwapV2,
-    SushiV2,
-    AerodromeV2,
-    BaseswapV2
+    AerodromeV2
 }
 
 struct SwapV3 {
@@ -38,175 +57,136 @@ struct SwapV2 {
     uint256 amountIn;
     uint256 amountOutMin;
     DexV2Type dexType;
+    bytes data;
 }
 
+error SwapFailed();
+error InvalidDexType();
+
 contract MultiV3Executor is Ownable {
-    error SwapFailed();
+    using SafeERC20 for IERC20;
 
-    event SwapAttempt(address indexed tokenIn, address indexed tokenOut, uint24 fee);
-    event SwapSuccess(address indexed tokenIn, address indexed tokenOut, uint24 fee, uint256 amountOut);
+    event V3SwapAttempt(address router, DexV3Type dexType, address tokenIn, address tokenOut, uint256 amountIn);
+    event V2SwapAttempt(address router, DexV2Type dexType, address tokenIn, address tokenOut, uint256 amountIn);
+    event Approve(address token, address spender, uint256 amount);
 
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    constructor(address _newOwner) Ownable(_newOwner) {}
 
-    function approveToken(address _token, address _spender, uint256 _amount) internal {
-        IERC20(_token).approve(_spender, _amount);
-    }
+    function executeV3Swaps(SwapV3[] memory _swaps, uint256 _initialAmount) public payable {
+        uint256 amountToSwap = _initialAmount;
 
-    function _executeV3Swaps(SwapV3[] memory _swaps, uint256 _initialAmount) public returns (uint256) {
-        console.log("--- V3 Swaps ---");
-        uint256 nextAmountIn = _initialAmount;
         for (uint256 i = 0; i < _swaps.length; i++) {
-            SwapV3 memory currentSwap = _swaps[i];
-            uint256 amountToSwap = currentSwap.amountIn > 0 ? currentSwap.amountIn : nextAmountIn;
-            console.log("V3 Swap %d", i);
-            console.log("  Router: %s", address(currentSwap.router));
-            console.log("  Pool: %s", address(currentSwap.pool));
-            console.log("  Token In: %s", address(currentSwap.tokenIn));
-            console.log("  Token Out: %s", address(currentSwap.tokenOut));
-            console.log("  Amount In: %d", amountToSwap);
-
-            if (currentSwap.dexType == DexV3Type.UniswapV3) {
-                nextAmountIn = swapExactInputSingleV3(
-                    currentSwap.router,
-                    currentSwap.pool,
-                    currentSwap.tokenIn,
-                    currentSwap.tokenOut,
-                    amountToSwap,
-                    currentSwap.amountOutMin,
-                    address(this),
-                    block.timestamp
-                );
-            } else if (currentSwap.dexType == DexV3Type.PancakeV3) {
-                nextAmountIn = swapExactInputSinglePancakeV3(
-                    currentSwap.router,
-                    currentSwap.pool,
-                    currentSwap.tokenIn,
-                    currentSwap.tokenOut,
-                    amountToSwap,
-                    currentSwap.amountOutMin,
-                    address(this),
-                    block.timestamp
-                );
+            if (i > 0) {
+                amountToSwap = IERC20(_swaps[i].tokenIn).balanceOf(address(this));
             }
-            console.log("  Amount Out: %d", nextAmountIn);
+            if (amountToSwap > 0) {
+                _executeV3Swap(_swaps[i], amountToSwap);
+            }
         }
-        return nextAmountIn;
     }
 
-    function _executeV2Swaps(SwapV2[] memory _swaps, uint256 _initialAmount) public returns (uint256) {
-        console.log("--- V2 Swaps ---");
-        uint256 nextAmountIn = _initialAmount;
-        for (uint256 i = 0; i < _swaps.length; i++) {
-            SwapV2 memory currentSwap = _swaps[i];
-            uint256 amountToSwap = currentSwap.amountIn > 0 ? currentSwap.amountIn : nextAmountIn;
-            console.log("V2 Swap %d", i);
-            console.log("  Router: %s", address(currentSwap.router));
-            console.log("  Path: %s -> %s", currentSwap.path[0], currentSwap.path[1]);
-            console.log("  Amount In: %d", amountToSwap);
+    function _executeV3Swap(SwapV3 memory _swap, uint256 _amountIn) internal {
+        IERC20(_swap.tokenIn).forceApprove(_swap.router, _amountIn);
+        emit Approve(_swap.tokenIn, _swap.router, _amountIn);
+        emit V3SwapAttempt(_swap.router, _swap.dexType, _swap.tokenIn, _swap.tokenOut, _amountIn);
 
-            nextAmountIn = swapExactTokensForTokensV2(
-                currentSwap.router,
-                amountToSwap,
-                currentSwap.amountOutMin,
-                currentSwap.path,
+        if (_swap.dexType == DexV3Type.UniswapV3) {
+            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                tokenIn: _swap.tokenIn,
+                tokenOut: _swap.tokenOut,
+                fee: IPancakeV3Pool(_swap.pool).fee(),
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: _amountIn,
+                amountOutMinimum: _swap.amountOutMin,
+                sqrtPriceLimitX96: 0
+            });
+            ISwapRouter(_swap.router).exactInputSingle(params);
+        } else if (_swap.dexType == DexV3Type.PancakeV3) {
+            ISwapRouter.ExactInputSingleParams memory pancakeParams = ISwapRouter.ExactInputSingleParams({
+                tokenIn: _swap.tokenIn,
+                tokenOut: _swap.tokenOut,
+                fee: IPancakeV3Pool(_swap.pool).fee(),
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: _amountIn,
+                amountOutMinimum: _swap.amountOutMin,
+                sqrtPriceLimitX96: 0
+            });
+            ISwapRouter(_swap.router).exactInputSingle(pancakeParams);
+        } else {
+            revert InvalidDexType();
+        }
+    }
+
+    function executeV2Swaps(SwapV2[] memory _swaps, uint256 _initialAmount) public payable {
+        uint256 amountToSwap = _initialAmount;
+        for (uint256 i = 0; i < _swaps.length; i++) {
+            if (i > 0) {
+                amountToSwap = IERC20(_swaps[i].path[0]).balanceOf(address(this));
+            }
+            if (amountToSwap > 0) {
+                _executeV2Swap(_swaps[i], amountToSwap);
+            }
+        }
+    }
+
+    function _executeV2Swap(SwapV2 memory _swap, uint256 _amountIn) internal {
+        IERC20(_swap.path[0]).forceApprove(_swap.router, _amountIn);
+        emit Approve(_swap.path[0], _swap.router, _amountIn);
+        emit V2SwapAttempt(
+            _swap.router,
+            _swap.dexType,
+            _swap.path[0],
+            _swap.path[_swap.path.length - 1],
+            _amountIn
+        );
+
+        if (_swap.dexType == DexV2Type.UniswapV2) {
+            try IUniswapV2Router(_swap.router).swapExactTokensForTokens(
+                _amountIn,
+                _swap.amountOutMin,
+                _swap.path,
                 address(this),
                 block.timestamp
+            ) {} catch {
+                revert SwapFailed();
+            }
+        } else if (_swap.dexType == DexV2Type.AerodromeV2) {
+            (address[] memory path, bool[] memory stable, address factory) = abi.decode(
+                _swap.data,
+                (address[], bool[], address)
             );
-            console.log("  Amount Out: %d", nextAmountIn);
-        }
-        return nextAmountIn;
-    }
-
-    function swapExactTokensForTokensV2(
-        address router,
-        uint amountIn,
-        uint amountOutMin,
-        address[] memory path,
-        address to,
-        uint deadline
-    ) internal returns (uint) {
-        approveToken(path[0], router, amountIn);
-        uint[] memory amounts = IUniswapV2Router(router).swapExactTokensForTokens(
-            amountIn,
-            amountOutMin,
-            path,
-            to,
-            deadline
-        );
-        return amounts[amounts.length - 1];
-    }
-
-    function swapExactInputSingleV3(
-        address _router,
-        address _pool,
-        address _tokenIn,
-        address _tokenOut,
-        uint256 _amountIn,
-        uint256 _amountOutMinimum,
-        address _recipient,
-        uint256 _deadline
-    ) internal returns (uint256 amountOut) {
-        approveToken(_tokenIn, _router, _amountIn);
-
-        uint24 fee = IUniswapV3Pool(_pool).fee();
-        emit SwapAttempt(_tokenIn, _tokenOut, fee);
-
-        try
-            IUniswapV3SwapRouter(_router).exactInputSingle(
-                IUniswapV3SwapRouter.ExactInputSingleParams({
-                    tokenIn: _tokenIn,
-                    tokenOut: _tokenOut,
-                    fee: fee,
-                    recipient: _recipient,
-                    deadline: _deadline,
-                    amountIn: _amountIn,
-                    amountOutMinimum: _amountOutMinimum,
-                    sqrtPriceLimitX96: 0
-                })
-            )
-        returns (uint256 result) {
-            emit SwapSuccess(_tokenIn, _tokenOut, fee, result);
-            return result;
-        } catch (bytes memory reason) {
-            console.logBytes(reason);
-            revert SwapFailed();
+            Route[] memory routes = new Route[](path.length - 1);
+            for (uint i = 0; i < path.length - 1; i++) {
+                routes[i] = Route({
+                    from: path[i],
+                    to: path[i+1],
+                    stable: stable[i],
+                    factory: factory
+                });
+            }
+            try IAerodromeRouter(_swap.router).swapExactTokensForTokens(
+                _amountIn,
+                _swap.amountOutMin,
+                routes,
+                address(this),
+                block.timestamp
+            ) {} catch {
+                revert SwapFailed();
+            }
+        } else {
+            revert InvalidDexType();
         }
     }
 
-    function swapExactInputSinglePancakeV3(
-        address _router,
-        address _pool,
-        address _tokenIn,
-        address _tokenOut,
-        uint256 _amountIn,
-        uint256 _amountOutMinimum,
-        address _recipient,
-        uint256 _deadline
-    ) internal returns (uint256 amountOut) {
-        approveToken(_tokenIn, _router, _amountIn);
-
-        uint24 fee = 500;
-        emit SwapAttempt(_tokenIn, _tokenOut, fee);
-
-        try
-            IPancakeV3SwapRouter(_router).exactInputSingle(
-                IPancakeV3SwapRouter.ExactInputSingleParams({
-                    tokenIn: _tokenIn,
-                    tokenOut: _tokenOut,
-                    fee: fee,
-                    recipient: _recipient,
-                    deadline: _deadline,
-                    amountIn: _amountIn,
-                    amountOutMinimum: _amountOutMinimum,
-                    sqrtPriceLimitX96: 0
-                })
-            )
-        returns (uint256 result) {
-            emit SwapSuccess(_tokenIn, _tokenOut, fee, result);
-            return result;
-        } catch (bytes memory reason) {
-            console.logBytes(reason);
-            revert SwapFailed();
+    function withdraw(address _token) external onlyOwner {
+        if (_token == address(0)) {
+            payable(owner()).transfer(address(this).balance);
+            return;
         }
+        IERC20(_token).safeTransfer(owner(), IERC20(_token).balanceOf(address(this)));
     }
+
+    receive() external payable {}
 }
