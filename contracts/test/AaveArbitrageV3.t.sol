@@ -17,8 +17,17 @@ contract AaveArbitrageV3Test is Test, Constants {
 
     function setUp() public {
         vm.createSelectFork("base");
+
+        address[] memory initialWhitelistedRouters = new address[](4);
+        initialWhitelistedRouters[0] = UNISWAP_V3_ROUTER;
+        initialWhitelistedRouters[1] = UNISWAP_V2_ROUTER;
+        initialWhitelistedRouters[2] = SUSHISWAP_V2_ROUTER;
+        initialWhitelistedRouters[3] = AERODROME_ROUTER;
+
         arbitrageContract = new AaveArbitrageV3(
-            IPool(AAVE_V3_POOL)
+            IPool(AAVE_V3_POOL),
+            multisig,
+            initialWhitelistedRouters
         );
     }
 
@@ -60,7 +69,7 @@ contract AaveArbitrageV3Test is Test, Constants {
         swapPath[1] = SwapStep({ stepType: SwapStepType.V2, index: 0 });
 
         // Simulate a profitable arbitrage by placing profit in the contract beforehand
-        deal(USDC, address(arbitrageContract), simulatedProfit);
+        deal(USDC, address(arbitrageContract), loanAmount + simulatedProfit);
 
         uint256 initiatorBalanceBefore = IERC20(USDC).balanceOf(initiator);
         uint256 multisigBalanceBefore = IERC20(USDC).balanceOf(multisig);
@@ -70,6 +79,15 @@ contract AaveArbitrageV3Test is Test, Constants {
 
         uint256 initiatorBalanceAfter = IERC20(USDC).balanceOf(initiator);
         uint256 multisigBalanceAfter = IERC20(USDC).balanceOf(multisig);
+
+        console.log("AaveArbitrageV3Test: Loan Amount (USDC):", loanAmount);
+        console.log("AaveArbitrageV3Test: Simulated Profit (USDC):", simulatedProfit);
+        console.log("AaveArbitrageV3Test: Initiator Balance Before (USDC):", initiatorBalanceBefore);
+        console.log("AaveArbitrageV3Test: Multisig Balance Before (USDC):", multisigBalanceBefore);
+        console.log("AaveArbitrageV3Test: Initiator Balance After (USDC):", initiatorBalanceAfter);
+        console.log("AaveArbitrageV3Test: Multisig Balance After (USDC):", multisigBalanceAfter);
+        console.log("AaveArbitrageV3Test: Initiator Profit (USDC):", initiatorBalanceAfter - initiatorBalanceBefore);
+        console.log("AaveArbitrageV3Test: Multisig Profit (USDC):", multisigBalanceAfter - multisigBalanceBefore);
 
         assertGt(initiatorBalanceAfter, initiatorBalanceBefore, "Initiator should have received a fee");
         assertGt(multisigBalanceAfter, multisigBalanceBefore, "Multisig should have received profit");

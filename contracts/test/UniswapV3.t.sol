@@ -12,11 +12,23 @@ contract UniswapV3Test is Test, Constants {
     AaveArbitrageV3 public executor;
     uint24 public constant WETH_USDC_FEE = 500;
     address public initiator = 0xC3f2c61C4836Afeb9Ae601c91F6FE661df3D634E;
+    address public multisig = 0x1111111111111111111111111111111111111111;
 
 
     function setUp() public {
         vm.createSelectFork("base");
-        executor = new AaveArbitrageV3(IPool(AAVE_V3_POOL));
+
+        address[] memory initialWhitelistedRouters = new address[](4);
+        initialWhitelistedRouters[0] = UNISWAP_V3_ROUTER;
+        initialWhitelistedRouters[1] = UNISWAP_V2_ROUTER;
+        initialWhitelistedRouters[2] = SUSHISWAP_V2_ROUTER;
+        initialWhitelistedRouters[3] = AERODROME_ROUTER;
+
+        executor = new AaveArbitrageV3(
+            IPool(AAVE_V3_POOL),
+            multisig,
+            initialWhitelistedRouters
+        );
     }
 
     function test_RoundTripUniswapV3() public {
@@ -59,6 +71,7 @@ contract UniswapV3Test is Test, Constants {
         deal(USDC, address(executor), amountToBorrow + simulatedProfit);
 
         uint256 initiatorBalanceBefore = IERC20(USDC).balanceOf(initiator);
+        uint256 multisigBalanceBefore = IERC20(USDC).balanceOf(multisig);
 
         vm.prank(initiator);
         executor.executeArbitrage(
@@ -69,7 +82,19 @@ contract UniswapV3Test is Test, Constants {
             swapsV2
         );
 
-        uint256 initiatorBalanceAfter = IERC20(USDC).balanceOf( initiator);
+        uint256 initiatorBalanceAfter = IERC20(USDC).balanceOf(initiator);
+        uint256 multisigBalanceAfter = IERC20(USDC).balanceOf(multisig);
+
+        console.log("UniswapV3Test: Loan Amount (USDC):", amountToBorrow);
+        console.log("UniswapV3Test: Simulated Profit (USDC):", simulatedProfit);
+        console.log("UniswapV3Test: Initiator Balance Before (USDC):", initiatorBalanceBefore);
+        console.log("UniswapV3Test: Multisig Balance Before (USDC):", multisigBalanceBefore);
+        console.log("UniswapV3Test: Initiator Balance After (USDC):", initiatorBalanceAfter);
+        console.log("UniswapV3Test: Multisig Balance After (USDC):", multisigBalanceAfter);
+        console.log("UniswapV3Test: Initiator Profit (USDC):", initiatorBalanceAfter - initiatorBalanceBefore);
+        console.log("UniswapV3Test: Multisig Profit (USDC):", multisigBalanceAfter - multisigBalanceBefore);
+
         assertGt(initiatorBalanceAfter, initiatorBalanceBefore, "Initiator should have received a fee");
+        assertGt(multisigBalanceAfter, multisigBalanceBefore, "Multisig should have received profit");
     }
 }

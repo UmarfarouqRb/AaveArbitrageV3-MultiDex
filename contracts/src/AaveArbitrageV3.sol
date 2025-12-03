@@ -70,6 +70,7 @@ struct SwapV2 {
 
 error SwapFailed();
 error InvalidDexType();
+error NotWhitelisted(address router);
 
 enum SwapResult {
     SUCCESS,
@@ -86,8 +87,9 @@ contract AaveArbitrageV3 is Ownable {
 
     IAaveV3Pool public immutable POOL;
 
-    address public constant MULTISIG = 0x1111111111111111111111111111111111111111;
+    address public multisig;
     uint256 public initiatorFee;
+    mapping(address => bool) public whitelistedRouters;
 
     error InvalidLoanAmount();
     error LoanNotInitiated();
@@ -98,13 +100,22 @@ contract AaveArbitrageV3 is Ownable {
     event V3SwapAttempt(address router, DexV3Type dexType, address tokenIn, address tokenOut, uint256 amountIn);
     event V2SwapAttempt(address router, DexV2Type dexType, address tokenIn, address tokenOut, uint256 amountIn);
     event Approve(address token, address spender, uint256 amount);
+    event RouterWhitelisted(address indexed router, bool status);
+    event SetMultisig(address multisig);
 
     constructor(
-        IAaveV3Pool _aavePool
+        IAaveV3Pool _aavePool,
+        address _multisig,
+        address[] memory _initialWhitelistedRouters
     ) Ownable(msg.sender) {
         POOL = _aavePool;
+        multisig = _multisig;
         initiatorFee = 500; // 5%
-        transferOwnership(MULTISIG);
+
+        for (uint i = 0; i < _initialWhitelistedRouters.length; i++) {
+            whitelistedRouters[_initialWhitelistedRouters[i]] = true;
+            emit RouterWhitelisted(_initialWhitelistedRouters[i], true);
+        }
     }
 
     function executeArbitrage(
@@ -128,7 +139,7 @@ contract AaveArbitrageV3 is Ownable {
         address asset,
         uint256 amount,
         uint256 premium,
-        address initiator,
+        address, // initiator
         bytes calldata params
     ) external returns (bool) {
         if (msg.sender != address(POOL)) {
@@ -168,12 +179,15 @@ contract AaveArbitrageV3 is Ownable {
         }
 
         uint256 netProfit = finalBalance - totalRepayAmount;
-        
+
         distributeProfit(asset, netProfit, totalRepayAmount, initiatorAddress);
         return true;
     }
 
     function _executeV3Swap(SwapV3 memory _swap, uint256 _amountIn) internal {
+        if (!whitelistedRouters[_swap.router]) {
+            revert NotWhitelisted(_swap.router);
+        }
         IERC20(_swap.tokenIn).forceApprove(_swap.router, _amountIn);
         emit Approve(_swap.tokenIn, _swap.router, _amountIn);
         emit V3SwapAttempt(_swap.router, _swap.dexType, _swap.tokenIn, _swap.tokenOut, _amountIn);
@@ -201,6 +215,9 @@ contract AaveArbitrageV3 is Ownable {
     }
 
     function _executeV2Swap(SwapV2 memory _swap, uint256 _amountIn) internal {
+        if (!whitelistedRouters[_swap.router]) {
+            revert NotWhitelisted(_swap.router);
+        }
         IERC20(_swap.path[0]).forceApprove(_swap.router, _amountIn);
         emit Approve(_swap.path[0], _swap.router, _amountIn);
         emit V2SwapAttempt(
@@ -260,14 +277,29 @@ contract AaveArbitrageV3 is Ownable {
             IERC20(_asset).safeTransfer(_initiator, initiatorAmount);
         }
         if (multisigAmount > 0) {
-            IERC20(_asset).safeTransfer(MULTISIG, multisigAmount);
+            IERC20(_asset).safeTransfer(multisig, multisigAmount);
         }
 
         emit ProfitDistribution(_initiator, initiatorAmount, multisigAmount);
     }
 
+    function addRouter(address _router) external onlyOwner {
+        whitelistedRouters[_router] = true;
+        emit RouterWhitelisted(_router, true);
+    }
+
+    function removeRouter(address _router) external onlyOwner {
+        whitelistedRouters[_router] = false;
+        emit RouterWhitelisted(_router, false);
+    }
+
     function setInitiatorFee(uint256 _newFee) external onlyOwner {
         initiatorFee = _newFee;
+    }
+
+    function setMultisig(address _multisig) external onlyOwner {
+        multisig = _multisig;
+        emit SetMultisig(_multisig);
     }
 
     function withdraw(address _token) external onlyOwner {
