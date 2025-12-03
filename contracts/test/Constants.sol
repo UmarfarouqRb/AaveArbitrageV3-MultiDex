@@ -4,6 +4,20 @@ pragma solidity ^0.8.20;
 contract Constants {
     // --- MAINNET FORK ADDRESSES ---
     // --- ERC20 Tokens ---
+    address internal constant MAINNET_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address internal constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+
+    // --- Aave ---
+    address internal constant MAINNET_AAVE_V3_POOL_ADDRESSES_PROVIDER = 0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e;
+
+    // --- Uniswap ---
+    address internal constant MAINNET_UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address internal constant MAINNET_UNISWAP_V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
+    address internal constant MAINNET_UNISWAP_V2_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+    address internal constant MAINNET_UNISWAP_V2_FACTORY = 0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f;
+
+    // --- BASE FORK ADDRESSES ---
+    // --- ERC20 Tokens ---
     address internal constant WETH = 0x4200000000000000000000000000000000000006;
     address internal constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
     address internal constant DAI = 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb;
@@ -27,7 +41,7 @@ contract Constants {
     // --- PancakeSwap ---
     address internal constant PANCAKESWAP_V3_ROUTER = 0x1b81D678ffb9C0263b24A97847620C99d213eB14;
     address internal constant PANCAKESWAP_V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
-    address internal constant PANCAKESWAP_V3_POOL_DEPLOYER = 0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9;
+    address internal constant PANCAKESWAP_V3_POOL__DEPLOYER = 0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9;
     address internal constant PANCAKE_V3_QUOTER = 0x5F0ec0c2eC2C81b3d3574D46C40ea504f61704e6;
 
 

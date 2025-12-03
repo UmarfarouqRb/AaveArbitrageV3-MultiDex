@@ -2,93 +2,110 @@
 pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
-import {MultiV3Executor, SwapV3, DexV3Type} from "src/MultiV3Executor.sol";
+import {AaveArbitrageV3, SwapStep, SwapStepType, SwapV3, SwapV2, DexV3Type} from "../src/AaveArbitrageV3.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Constants} from "./Constants.sol";
 import {IPancakeV3Factory} from "pancake-v3-core/interfaces/IPancakeV3Factory.sol";
-import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import {IPool} from "aave-v3-core/contracts/interfaces/IPool.sol";
 
 contract PancakeV3Test is Test, Constants {
-    MultiV3Executor public executor;
-    address public owner = 0x7c8999dC9a822c1f0Df42023113EDB4FDd543266;
-    uint24 public constant WETH_USDC_FEE_PANCAKE = 500;
-    uint24 public constant WETH_USDC_FEE_UNISWAP = 500;
+    AaveArbitrageV3 public executor;
+    uint24 public constant WETH_USDC_FEE = 500; // 0.05%
 
     function setUp() public {
-        vm.createSelectFork("https://mainnet.base.org");
-        executor = new MultiV3Executor(owner);
+        vm.createSelectFork("base");
+        executor = new AaveArbitrageV3(IPool(AAVE_V3_POOL));
     }
 
-    function test_SingleSwapPancakeV3() public {
-        uint256 amountIn = 10 ether;
-        deal(WETH, address(this), amountIn);
-        IERC20(WETH).transfer(address(executor), amountIn);
+    function test_RoundTripPancakeV3() public {
+        uint256 amountToBorrow = 10000e6; // 10,000 USDC
 
-        address expectedPool = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(
-            WETH,
-            USDC,
-            WETH_USDC_FEE_PANCAKE
-        );
-
-        SwapV3[] memory swaps = new SwapV3[](1);
-        swaps[0] = SwapV3({
+        // 1. Swap USDC for WETH on PancakeV3
+        address pool1 = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(USDC, WETH, WETH_USDC_FEE);
+        SwapV3 memory swap1 = SwapV3({
             router: PANCAKESWAP_V3_ROUTER,
-            pool: expectedPool,
-            tokenIn: WETH,
-            tokenOut: USDC,
-            amountIn: amountIn,
-            amountOutMin: 0,
-            dexType: DexV3Type.PancakeV3
-        });
-
-        uint256 usdcBalanceBefore = IERC20(USDC).balanceOf(address(executor));
-        executor.executeV3Swaps(swaps, amountIn);
-        uint256 usdcBalanceAfter = IERC20(USDC).balanceOf(address(executor));
-
-        assertGt(usdcBalanceAfter, usdcBalanceBefore, "USDC balance should have increased after swap");
-    }
-
-    function test_SwapUniswapV3ToPancakeV3() public {
-        uint256 amountIn = 10 ether;
-        deal(WETH, address(this), amountIn);
-        IERC20(WETH).transfer(address(executor), amountIn);
-
-        SwapV3[] memory swaps = new SwapV3[](2);
-
-        // First swap: Uniswap V3 (WETH -> USDC)
-        address uniswapV3Pool = IUniswapV3Factory(UNISWAP_V3_FACTORY).getPool(WETH, USDC, WETH_USDC_FEE_UNISWAP);
-        swaps[0] = SwapV3({
-            router: UNISWAP_V3_ROUTER,
-            pool: uniswapV3Pool,
-            tokenIn: WETH,
-            tokenOut: USDC,
-            amountIn: amountIn,
-            amountOutMin: 0,
-            dexType: DexV3Type.UniswapV3
-        });
-
-        // Second swap: PancakeSwap V3 (USDC -> WETH)
-        address pancakeV3Pool = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(
-            USDC,
-            WETH,
-            WETH_USDC_FEE_PANCAKE
-        );
-        swaps[1] = SwapV3({
-            router: PANCAKESWAP_V3_ROUTER,
-            pool: pancakeV3Pool,
+            pool: pool1,
             tokenIn: USDC,
             tokenOut: WETH,
-            amountIn: 0, // Should be the output of the first swap
             amountOutMin: 0,
             dexType: DexV3Type.PancakeV3
         });
 
-        uint256 wethBalanceBefore = IERC20(WETH).balanceOf(address(executor));
-        executor.executeV3Swaps(swaps, amountIn);
-        uint256 wethBalanceAfter = IERC20(WETH).balanceOf(address(executor));
+        // 2. Swap WETH for USDC on PancakeV3
+        address pool2 = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(WETH, USDC, WETH_USDC_FEE);
+        SwapV3 memory swap2 = SwapV3({
+            router: PANCAKESWAP_V3_ROUTER,
+            pool: pool2,
+            tokenIn: WETH,
+            tokenOut: USDC,
+            amountOutMin: 0,
+            dexType: DexV3Type.PancakeV3
+        });
 
-        assertTrue(
-            wethBalanceAfter < wethBalanceBefore, "WETH balance should be less after swaps due to fees/slippage"
+        SwapV3[] memory swapsV3 = new SwapV3[](2);
+        swapsV3[0] = swap1;
+        swapsV3[1] = swap2;
+        
+        SwapV2[] memory swapsV2 = new SwapV2[](0);
+
+        SwapStep[] memory swapPath = new SwapStep[](2);
+        swapPath[0] = SwapStep({ stepType: SwapStepType.V3, index: 0 });
+        swapPath[1] = SwapStep({ stepType: SwapStepType.V3, index: 1 });
+
+        bytes memory expectedError = abi.encodeWithSelector(AaveArbitrageV3.InsufficientProfit.selector);
+        vm.expectRevert(expectedError);
+
+        executor.executeArbitrage(
+            USDC,
+            amountToBorrow,
+            swapPath,
+            swapsV3,
+            swapsV2
+        );
+    }
+    
+    function test_MultiLegV3RoundTrip() public {
+        uint256 amountToBorrow = 10000e6; // 10,000 USDC
+
+        address pool1 = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(USDC, WETH, WETH_USDC_FEE);
+        SwapV3 memory swap1 = SwapV3({
+            router: UNISWAP_V3_ROUTER, // This is actually the PancakeV3 router address in Constants.sol
+            pool: pool1,
+            tokenIn: USDC,
+            tokenOut: WETH,
+            amountOutMin: 0,
+            dexType: DexV3Type.PancakeV3 // Using PancakeV3 logic as Uniswap V3 isn't on Base
+        });
+
+        address pool2 = IPancakeV3Factory(PANCAKESWAP_V3_FACTORY).getPool(WETH, USDC, WETH_USDC_FEE);
+        SwapV3 memory swap2 = SwapV3({
+            router: PANCAKESWAP_V3_ROUTER,
+            pool: pool2,
+            tokenIn: WETH,
+            tokenOut: USDC,
+            amountOutMin: 0,
+            dexType: DexV3Type.PancakeV3
+        });
+
+        SwapV3[] memory swapsV3 = new SwapV3[](2);
+        swapsV3[0] = swap1;
+        swapsV3[1] = swap2;
+
+        SwapV2[] memory swapsV2 = new SwapV2[](0);
+
+        SwapStep[] memory swapPath = new SwapStep[](2);
+        swapPath[0] = SwapStep({ stepType: SwapStepType.V3, index: 0 });
+        swapPath[1] = SwapStep({ stepType: SwapStepType.V3, index: 1 });
+
+        bytes memory expectedError = abi.encodeWithSelector(AaveArbitrageV3.InsufficientProfit.selector);
+        vm.expectRevert(expectedError);
+        
+        executor.executeArbitrage(
+            USDC,
+            amountToBorrow,
+            swapPath,
+            swapsV3,
+            swapsV2
         );
     }
 }
