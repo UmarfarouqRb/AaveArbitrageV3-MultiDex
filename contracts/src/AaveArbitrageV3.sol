@@ -47,7 +47,8 @@ enum DexV3Type {
 
 enum DexV2Type {
     UniswapV2,
-    AerodromeV2
+    AerodromeV2,
+    SushiswapV2
 }
 
 struct SwapV3 {
@@ -210,7 +211,7 @@ contract AaveArbitrageV3 is Ownable {
             _amountIn
         );
 
-        if (_swap.dexType == DexV2Type.UniswapV2) {
+        if (_swap.dexType == DexV2Type.UniswapV2 || _swap.dexType == DexV2Type.SushiswapV2) {
             try IUniswapV2Router(_swap.router).swapExactTokensForTokens(
                 _amountIn,
                 _swap.amountOutMin,
