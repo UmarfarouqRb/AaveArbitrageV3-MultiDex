@@ -94,27 +94,27 @@ contract AaveArbitrageV3Test is Test, Constants {
     }
 
     function test_SetInitiatorFee() public {
-        uint256 newFee = 1000; // 10%
+        uint16 newFee = 1000; // 10%
         vm.prank(arbitrageContract.owner());
         arbitrageContract.setInitiatorFee(newFee);
         assertEq(arbitrageContract.initiatorFee(), newFee, "Initiator fee should be updated");
     }
 
     function test_SetInitiatorFee_NotOwner() public {
-        uint256 newFee = 1000; // 10%
+        uint16 newFee = 1000; // 10%
         address notOwner = address(0xDEAD);
         vm.prank(notOwner);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, notOwner));
         arbitrageContract.setInitiatorFee(newFee);
     }
 
-    function test_Withdraw() public {
+    function test_SweepERC20() public {
         deal(USDC, address(arbitrageContract), 1000e6);
         
         uint256 multisigBalanceBefore = IERC20(USDC).balanceOf(arbitrageContract.owner());
         
         vm.prank(arbitrageContract.owner());
-        arbitrageContract.withdraw(USDC);
+        arbitrageContract.sweepERC20(USDC);
         
         uint256 multisigBalanceAfter = IERC20(USDC).balanceOf(arbitrageContract.owner());
         

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Script.sol";
-import "../src/AaveArbitrageV3.sol";
+import {Script} from "forge-std/Script.sol";
+import {AaveArbitrageV3} from "../src/AaveArbitrageV3.sol";
 import {Constants} from "../test/Constants.sol";
 import {IPool} from "aave-v3-core/contracts/interfaces/IPool.sol";
 
@@ -20,7 +20,7 @@ contract DeployAaveArbitrageV3 is Script, Constants {
         initialWhitelistedRouters[3] = AERODROME_ROUTER;
         initialWhitelistedRouters[4] = PANCAKESWAP_V3_ROUTER;
 
-        AaveArbitrageV3 arbitrageContract = new AaveArbitrageV3(
+        new AaveArbitrageV3(
             IPool(AAVE_V3_POOL),
             multisig,
             initialWhitelistedRouters

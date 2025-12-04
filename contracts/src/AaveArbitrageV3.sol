@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IPool as IAaveV3Pool} from "aave-v3-core/contracts/interfaces/IPool.sol";
 import {IQuoterV2} from "v3-periphery/interfaces/IQuoterV2.sol";
 import {ISwapRouter} from "v3-periphery/interfaces/ISwapRouter.sol";
@@ -82,13 +83,13 @@ interface IUniswapV3Pool {
     function fee() external view returns (uint24);
 }
 
-contract AaveArbitrageV3 is Ownable {
+contract AaveArbitrageV3 is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IAaveV3Pool public immutable POOL;
 
     address public multisig;
-    uint256 public initiatorFee;
+    uint16 public initiatorFee;
     mapping(address => bool) public whitelistedRouters;
 
     error InvalidLoanAmount();
@@ -107,12 +108,13 @@ contract AaveArbitrageV3 is Ownable {
         IAaveV3Pool _aavePool,
         address _multisig,
         address[] memory _initialWhitelistedRouters
-    ) Ownable(msg.sender) {
+    ) Ownable(_multisig) {
         POOL = _aavePool;
         multisig = _multisig;
         initiatorFee = 500; // 5%
 
-        for (uint i = 0; i < _initialWhitelistedRouters.length; i++) {
+        uint len = _initialWhitelistedRouters.length;
+        for (uint i = 0; i < len; i++) {
             whitelistedRouters[_initialWhitelistedRouters[i]] = true;
             emit RouterWhitelisted(_initialWhitelistedRouters[i], true);
         }
@@ -141,7 +143,7 @@ contract AaveArbitrageV3 is Ownable {
         uint256 premium,
         address, // initiator
         bytes calldata params
-    ) external returns (bool) {
+    ) external nonReentrant returns (bool) {
         if (msg.sender != address(POOL)) {
             revert LoanNotInitiated();
         }
@@ -150,7 +152,8 @@ contract AaveArbitrageV3 is Ownable {
 
         uint256 amountToSwap = amount;
 
-        for (uint i = 0; i < swapPath.length; i++) {
+        uint len = swapPath.length;
+        for (uint i = 0; i < len; i++) {
             if (swapPath[i].stepType == SwapStepType.V3) {
                 SwapV3 memory swap = swapsV3[swapPath[i].index];
                 if (i > 0) {
@@ -188,7 +191,9 @@ contract AaveArbitrageV3 is Ownable {
         if (!whitelistedRouters[_swap.router]) {
             revert NotWhitelisted(_swap.router);
         }
-        IERC20(_swap.tokenIn).forceApprove(_swap.router, _amountIn);
+        
+        SafeERC20.forceApprove(IERC20(_swap.tokenIn), _swap.router, _amountIn);
+
         emit Approve(_swap.tokenIn, _swap.router, _amountIn);
         emit V3SwapAttempt(_swap.router, _swap.dexType, _swap.tokenIn, _swap.tokenOut, _amountIn);
 
@@ -218,7 +223,10 @@ contract AaveArbitrageV3 is Ownable {
         if (!whitelistedRouters[_swap.router]) {
             revert NotWhitelisted(_swap.router);
         }
-        IERC20(_swap.path[0]).forceApprove(_swap.router, _amountIn);
+        require(_swap.path.length >= 2, "invalid path length");
+
+        SafeERC20.forceApprove(IERC20(_swap.path[0]), _swap.router, _amountIn);
+
         emit Approve(_swap.path[0], _swap.router, _amountIn);
         emit V2SwapAttempt(
             _swap.router,
@@ -243,6 +251,8 @@ contract AaveArbitrageV3 is Ownable {
                 _swap.data,
                 (address[], bool[], address)
             );
+            require(path.length >= 2, "invalid path");
+            require(stable.length == path.length - 1, "invalid aero stable length");
             Route[] memory routes = new Route[](path.length - 1);
             for (uint i = 0; i < path.length - 1; i++) {
                 routes[i] = Route({
@@ -267,8 +277,8 @@ contract AaveArbitrageV3 is Ownable {
     }
 
 
-    function distributeProfit(address _asset, uint256 _netProfit, uint256 _totalRepayAmount, address _initiator) internal {
-        IERC20(_asset).approve(address(POOL), _totalRepayAmount);
+    function distributeProfit(address _asset, uint256 _netProfit, uint256 _totalRepayAmount, address _initiator) private {
+        SafeERC20.forceApprove(IERC20(_asset), address(POOL), _totalRepayAmount);
 
         uint256 initiatorAmount = (_netProfit * initiatorFee) / 10000;
         uint256 multisigAmount = _netProfit - initiatorAmount;
@@ -293,7 +303,7 @@ contract AaveArbitrageV3 is Ownable {
         emit RouterWhitelisted(_router, false);
     }
 
-    function setInitiatorFee(uint256 _newFee) external onlyOwner {
+    function setInitiatorFee(uint16 _newFee) external onlyOwner {
         initiatorFee = _newFee;
     }
 
@@ -302,7 +312,7 @@ contract AaveArbitrageV3 is Ownable {
         emit SetMultisig(_multisig);
     }
 
-    function withdraw(address _token) external onlyOwner {
+    function sweepERC20(address _token) external onlyOwner {
         if (_token == address(0)) {
             payable(owner()).transfer(address(this).balance);
             return;
