@@ -8,16 +8,10 @@ const TopNav = () => {
   return (
     <nav className="flex justify-center items-center gap-2 md:gap-4 bg-background rounded-lg p-2">
         <NavLink 
-            to="/arbitrage-bot" 
+            to="/"
             className={({ isActive }) => `${isActive ? activeLinkClass : inactiveLinkClass} px-4 py-2 rounded-lg text-sm font-medium transition-colors`}
         >
             Bot Status
-        </NavLink>
-        <NavLink 
-            to="/" 
-            className={({ isActive }) => `${isActive ? activeLinkClass : inactiveLinkClass} px-4 py-2 rounded-lg text-sm font-medium transition-colors`}
-        >
-            Manual Trade
         </NavLink>
         <NavLink 
             to="/history" 

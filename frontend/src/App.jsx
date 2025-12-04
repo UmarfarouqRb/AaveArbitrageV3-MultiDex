@@ -10,7 +10,6 @@ import TopNav from './components/TopNav';
 
 // Lazy load the pages
 const ArbitrageBotPage = lazy(() => import('./pages/ArbitrageBotPage'));
-const ManualTradePage = lazy(() => import('./pages/ManualTradePage'));
 const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 
 const App = () => {
@@ -44,7 +43,7 @@ const App = () => {
                   <Routes>
                     <Route path="/" element={
                       <ErrorBoundary>
-                        {ready && authenticated ? <ManualTradePage /> : <LoginPagePrompt />}
+                        {ready && authenticated ? <ArbitrageBotPage /> : <LoginPagePrompt />}
                       </ErrorBoundary>
                     } />
                      <Route path="/arbitrage-bot" element={

@@ -1,4 +1,3 @@
-
 const { getAddress, parseUnits } = require('ethers');
 
 // --- Network Configuration ---
@@ -14,7 +13,7 @@ const NETWORKS = {
 const TOKENS = {
     base: {
         WETH: getAddress('0x4200000000000000000000000000000000000006'),
-        USDC: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'), 
+        USDC: getAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
         cbBTC: getAddress('0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf'),
         DAI: getAddress('0x50c5725949a6f0c72e6c4a641f24049a917db0cb'),
         DEGEN: getAddress('0x4ed4e862860bed51a9570b96d89af5e1b0efefed'),
@@ -45,24 +44,34 @@ const TOKEN_DECIMALS = {
 // --- DEX Configuration ---
 const DEX_ROUTERS = {
     base: {
-        'Aerodrome': {
+        'AerodromeV2': {
             router: getAddress('0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43'),
             factory: getAddress('0x420dd381b31aef6683db6b902084cb0ffcec40da'),
             stable: false, // Default to volatile
         },
         'PancakeV3': {
-            router: getAddress('0x678aa4bf4e210cf2166753e054d5b7c31cc7fa86'),
+            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
+            factory_v3: getAddress('0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865'),
         },
         'UniswapV3': {
-            router: getAddress('0x2626664c2603336e57b271c5c0b26f421741e481'),
+            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
+            factory_v3: getAddress('0x33128a8fC17869897dcE68Ed026d694621f6FDfD'),
         },
+        'UniswapV2': {
+            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
+            factory: getAddress('0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6'),
+        },
+        'SushiswapV2': {
+            router: getAddress('0x6bded42c6da8fbf0d2ba55b2fa120c5e0c8d7891'),
+            factory: getAddress('0x71524B4f93c58fcbF659783284E38825f0622859'),
+        }
     }
 };
 
 const DEX_QUOTERS = {
     base: {
-        'PancakeV3': getAddress('0xb048bbc1ee6b733fffcfb9e9cef7375518e25997'),
-        'UniswapV3': getAddress('0x3d4e44318e88753c0b805842dacfb33a1fc65dc6'),
+        'PancakeV3': getAddress('0x2fF35e3A5ddBb1e90b43a1CdE3c5aaB2F24806A8'),
+        'UniswapV3': getAddress('0x3d4Cba59AAE52d07b34E78E254e49fD94f93bD71'),
     }
 };
 
@@ -71,10 +80,23 @@ const V3_FEE_TIERS = {
     'UniswapV3': [100, 500, 3000, 10000],
 };
 
-const DEX_TYPES = {
-    'Aerodrome': 0, // Matches contract enum
-    'PancakeV3': 1, // Matches contract enum
-    'UniswapV3': 2, // Matches contract enum
+// --- Contract Enum Mappings ---
+// These MUST match the enums in the smart contract
+
+const SWAP_STEP_TYPES = {
+    V3: 0,
+    V2: 1
+};
+
+const V3_DEX_TYPES = {
+    'UniswapV3': 0,
+    'PancakeV3': 1
+};
+
+const V2_DEX_TYPES = {
+    'UniswapV2': 0,
+    'AerodromeV2': 1,
+    'SushiswapV2': 2
 };
 
 // --- Arbitrage Configuration ---
@@ -83,12 +105,6 @@ const LOAN_TOKENS = {
     USDC: TOKENS.base.USDC,
     WETH: TOKENS.base.WETH,
 };
-
-const LOAN_AMOUNTS = {
-    USDC: parseUnits('50000', TOKEN_DECIMALS.base.USDC), // 50,000 USDC
-    WETH: parseUnits('25', TOKEN_DECIMALS.base.WETH),       // 25 WETH
-};
-
 
 // Automatically generate pairs for all tokens against all loan tokens
 const ARBITRAGE_PAIRS = Object.values(LOAN_TOKENS).flatMap(loanToken =>
@@ -100,13 +116,15 @@ const ARBITRAGE_PAIRS = Object.values(LOAN_TOKENS).flatMap(loanToken =>
 
 // --- Bot Configuration ---
 const BOT_CONFIG = {
-    DRY_RUN: false, 
-    ARBITRAGE_CONTRACT_ADDRESS: getAddress('0x7b2Af90c95A38016aB9e09926500A9A1ca915779'),
+    DRY_RUN: false,
+    ARBITRAGE_CONTRACT_ADDRESS: getAddress('0x8b4714d43343afc179a34ced72e4a5672d8c4395'),
     MIN_PROFIT_THRESHOLD_ETH: '0.0001', // Minimum profit in ETH to trigger a trade
+    MIN_PROFIT_BPS: 20,
     GAS_PRICE_STRATEGY: 'fast',
     GAS_LIMIT: '1000000',
     AAVE_FLASH_LOAN_FEE: 0.0009, // 0.09%
     ESTIMATED_GAS_COST_ETH: '0', // Estimated gas cost in ETH
+    LOAN_PERCENTAGE: 1, // 1% of the pool's reserve
 };
 
 module.exports = {
@@ -116,9 +134,10 @@ module.exports = {
     DEX_ROUTERS,
     DEX_QUOTERS,
     V3_FEE_TIERS,
-    DEX_TYPES,
+    SWAP_STEP_TYPES,
+    V2_DEX_TYPES,
+    V3_DEX_TYPES,
     LOAN_TOKENS,
-    LOAN_AMOUNTS,
     ARBITRAGE_PAIRS,
     BOT_CONFIG,
 };
