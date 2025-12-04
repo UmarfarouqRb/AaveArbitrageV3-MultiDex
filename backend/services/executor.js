@@ -3,15 +3,20 @@ const fs = require('fs').promises;
 const path = require('path');
 const { pools } = require('../core/poolState');
 const { bn, div, mul, sub } = require('../utils/bigints');
-const { TOKEN_DECIMALS, BOT_CONFIG, DEX_ROUTERS, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES, DEX_QUOTERS } = require('../config');
+const { TOKEN_DECIMALS, BOT_CONFIG, DEX_ROUTERS, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES, DEX_QUOTERS, V3_FEE_TIERS } = require('../config');
 const IUniswapV2Router_ABI = require('../abis/IUniswapV2Router.json').abi;
 const IAerodromeRouter_ABI = require('../abis/IAerodromeRouter.json').abi;
-const IQuoterV2_ABI = require('../abis/IQuoterV2.json').abi;
+const IQuoterV2_ABI = require('../abis/IUniswapV3QuoterV2.json').abi;
+const IUniswapV3Factory_ABI = require('../abis/IUniswapV3Factory.json').abi;
 const { getProvider } = require('../core/provider.js');
 const { broadcast } = require('../core/listeners');
 const { wallet, arbitrageContract } = require('../core/wallet');
 
 const TRADE_HISTORY_FILE = path.join(__dirname, '..', 'trade_history.json');
+
+function sortTokens(a, b) {
+    return a.toLowerCase() < b.toLowerCase() ? [a, b] : [b, a];
+}
 
 async function recordTrade(tradeData) {
     let history = [];
@@ -64,8 +69,26 @@ async function getV2Quote(dex, tokenIn, tokenOut, amountIn) {
 async function getV3Quote(dex, tokenIn, tokenOut, fee, amountIn) {
     const provider = getProvider();
     const quoterAddress = DEX_QUOTERS.base[dex];
+    const factoryAddress = DEX_ROUTERS.base[dex].factory_v3;
+
+    if (!V3_FEE_TIERS[dex].includes(fee)) {
+        console.log(`Invalid fee tier for ${dex}: ${fee}`);
+        return 0n;
+    }
+
+    const [token0, token1] = sortTokens(tokenIn, tokenOut);
+
+    const factory = new ethers.Contract(factoryAddress, IUniswapV3Factory_ABI, provider);
+    const poolAddress = await factory.getPool(token0, token1, fee);
+
+    if (poolAddress === ethers.ZeroAddress) {
+        console.log(`Pool doesn't exist for ${dex} with fee ${fee}`);
+        return 0n;
+    }
+
     const quoter = new ethers.Contract(quoterAddress, IQuoterV2_ABI, provider);
 
+    let amountOut;
     try {
         const quote = await quoter.quoteExactInputSingle.staticCall({
             tokenIn: tokenIn,
@@ -74,13 +97,18 @@ async function getV3Quote(dex, tokenIn, tokenOut, fee, amountIn) {
             amountIn: amountIn,
             sqrtPriceLimitX96: 0
         });
-        return quote.amountOut;
-    } catch (error) {
-        if (error.code === 'CALL_EXCEPTION') {
-            return 0n; // Return 0 if the quote reverts (e.g., pool doesn't exist)
-        }
-        throw error;
+        amountOut = quote.amountOut;
+    } catch (err) {
+        console.log(`Quote reverted for ${dex}: skipping this arbitrage`);
+        return 0n;
     }
+
+    if (!amountOut || amountOut === 0n) {
+        console.log(`Empty quote (0x) for ${dex} -> No liquidity or revert`);
+        return 0n;
+    }
+
+    return amountOut;
 }
 
 async function executeArbitrage(buyDex, sellDex, pairKey) {
