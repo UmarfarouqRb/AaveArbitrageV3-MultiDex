@@ -2,7 +2,7 @@ const { ethers, formatUnits, AbiCoder } = require('ethers');
 const fs = require('fs').promises;
 const path = require('path');
 const { pools } = require('../core/poolState');
-const { bn, div, mul, sub } = require('../utils/bigints');
+const { bn, div, mul, sub, expand } = require('../utils/bigints');
 const { ABIS, TOKEN_DECIMALS, BOT_CONFIG, DEX_CONFIG, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES } = require('../config');
 const { getExecutionProvider } = require('../core/provider.js');
 const { broadcast } = require('../core/listeners');
@@ -48,7 +48,9 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
     if (buyDex.type === 'V2') {
         loanAmount = div(mul(buyDex.reserve1, loanPercentage), 100n);
     } else { // V3
-        loanAmount = div(mul(buyDex.liquidity, loanPercentage), 100n);
+        const Q96 = (1n << 96n);
+        const reserve1_v3 = div(mul(buyDex.liquidity, buyDex.sqrtPriceX96), Q96);
+        loanAmount = div(mul(reserve1_v3, loanPercentage), 100n);
     }
 
     if (loanAmount <= 0n) {

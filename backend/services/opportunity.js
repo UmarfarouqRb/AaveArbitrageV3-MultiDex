@@ -44,7 +44,8 @@ async function calculateAndExecuteOpportunities(pairKey) {
                     fee,
                     price: adjustedPrice,
                     type: 'V3',
-                    liquidity: feeData.liquidity
+                    liquidity: feeData.liquidity,
+                    sqrtPriceX96: feeData.sqrtPriceX96
                 });
             }
         }
