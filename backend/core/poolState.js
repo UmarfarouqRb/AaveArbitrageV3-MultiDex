@@ -17,7 +17,15 @@ async function initializePools() {
     console.log("Initializing pools...");
     const provider = getScanningProvider();
 
-    for (const pair of ARBITRAGE_PAIRS) {
+    const allTokens = Object.values(TOKENS.base);
+    const allPairs = [];
+    for (let i = 0; i < allTokens.length; i++) {
+        for (let j = i + 1; j < allTokens.length; j++) {
+            allPairs.push([allTokens[i], allTokens[j]]);
+        }
+    }
+
+    for (const pair of allPairs) {
         let [tokenA_address, tokenB_address] = pair;
 
         if (getAddress(tokenA_address) > getAddress(tokenB_address)) {
@@ -53,17 +61,39 @@ async function initializePools() {
                     factoryAbi = IUniswapV2Factory_ABI;
                 }
                 const factoryContract = new ethers.Contract(dexConfig.factory, factoryAbi, provider);
-                const isStable = !!dexConfig.stable;
-                try {
-                    const pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address, isStable);
-                    if (pairAddress && getAddress(pairAddress) !== ethers.ZeroAddress) {
-                        const code = await provider.getCode(pairAddress);
-                        if (code === '0x') continue; // Not a contract
-                        pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: isStable };
-                        await updateV2Pool(pairKey, dex);
-                        console.log(`Initialized V2 pool for ${pairKey} on ${dex} (stable: ${isStable})`);
-                    }
-                } catch (e) { /* silent fail */ }
+
+                if (dex === 'AerodromeV2') {
+                    try {
+                        let isStable = true;
+                        let pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address, isStable);
+
+                        if (!pairAddress || getAddress(pairAddress) === ethers.ZeroAddress) {
+                            isStable = false;
+                            pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address, isStable);
+                        }
+
+                        if (pairAddress && getAddress(pairAddress) !== ethers.ZeroAddress) {
+                            const code = await provider.getCode(pairAddress);
+                            if (code !== '0x') {
+                                pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: isStable };
+                                await updateV2Pool(pairKey, dex);
+                                console.log(`Initialized V2 pool for ${pairKey} on ${dex} (stable: ${isStable})`);
+                            }
+                        }
+                    } catch (e) { /* Ignore */ }
+                } else {
+                    try {
+                        const pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address);
+                        if (pairAddress && getAddress(pairAddress) !== ethers.ZeroAddress) {
+                            const code = await provider.getCode(pairAddress);
+                            if (code !== '0x') {
+                                pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: false };
+                                await updateV2Pool(pairKey, dex);
+                                console.log(`Initialized V2 pool for ${pairKey} on ${dex}`);
+                            }
+                        }
+                    } catch (e) { /* Ignore */ }
+                }
             } else if (dexConfig.type === 'V3') {
                 const factoryContract = new ethers.Contract(dexConfig.factory, ['function getPool(address, address, uint24) view returns (address)'], provider);
                 pools[pairKey].dexes[dex] = { type: 'V3', fees: {} };
@@ -72,12 +102,12 @@ async function initializePools() {
                         const poolAddress = await factoryContract.getPool(tokenA_address, tokenB_address, fee);
                         if (poolAddress && getAddress(poolAddress) !== ethers.ZeroAddress) {
                             const code = await provider.getCode(poolAddress);
-                            if (code === '0x') continue; // Not a contract
+                            if (code === '0x') continue;
                             pools[pairKey].dexes[dex].fees[fee] = { address: poolAddress };
                             await updateV3Pool(pairKey, dex, fee);
                             console.log(`Initialized V3 pool for ${pairKey} on ${dex} with fee ${fee}`);
                         }
-                    } catch (e) { /* silent fail */ }
+                    } catch (e) { /* Ignore */ }
                 }
             }
         }

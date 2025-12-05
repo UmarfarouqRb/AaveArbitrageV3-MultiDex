@@ -1,13 +1,14 @@
-const { ethers, getAddress, keccak256, toUtf8Bytes, formatUnits } = require('ethers');
+const { ethers, getAddress, keccak256, toUtf8Bytes, formatUnits, AbiCoder } = require('ethers');
 const { pools, updateV2Pool, updateV3Pool } = require('../core/poolState');
 const { bn, expand, div, mul, sub } = require('../utils/bigints');
 const { getPriceFromV2 } = require('../core/v2');
 const { getPriceFromV3 } = require('../core/v3');
 const { executeArbitrage } = require('./executor');
-const { BOT_CONFIG, LOAN_TOKENS, TOKEN_DECIMALS } = require('../config');
-const { getScanningProvider } = require('../core/provider.js');
-const { getAmountOut: getV2AmountOut } = require('../core/v2.js');
+const { BOT_CONFIG, LOAN_TOKENS, TOKEN_DECIMALS, DEX_CONFIG, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES } = require('../config');
+const { getScanningProvider, getExecutionProvider } = require('../core/provider.js');
+const { getAmountOut: getV2AmountOut, getOptimalAmountIn: getOptimalV2AmountIn } = require('../core/v2.js');
 const { getAmountOut: getV3AmountOut } = require('../core/v3.js');
+const { getArbitrageContract } = require('../core/wallet.js');
 
 const SWAP_EVENT_TOPIC_V2 = keccak256(toUtf8Bytes("Sync(uint112,uint112)"));
 const SWAP_EVENT_TOPIC_V3 = keccak256(toUtf8Bytes("Swap(address,address,int256,int256,uint160,uint128,int24)"));
@@ -26,29 +27,14 @@ function getPrices(pairKey) {
             if (!dexData.reserve0 || !dexData.reserve1) continue;
             const price = getPriceFromV2(dexData.reserve0, dexData.reserve1);
             if (price === 0n) continue;
-            const adjustedPrice = div(mul(price, expand(1n, pool.decimals0)), expand(1n, pool.decimals1));
-            prices.push({
-                dex,
-                price: adjustedPrice,
-                type: 'V2',
-                reserve0: dexData.reserve0,
-                reserve1: dexData.reserve1
-            });
+            prices.push({ dex, price, type: 'V2', reserve0: dexData.reserve0, reserve1: dexData.reserve1 });
         } else if (dexData.type === 'V3') {
             for (const fee in dexData.fees) {
                 const feeData = dexData.fees[fee];
                 if (!feeData.sqrtPriceX96 || !feeData.liquidity) continue;
                 const price = getPriceFromV3(feeData.sqrtPriceX96);
                 if (price === 0n) continue;
-                const adjustedPrice = div(mul(price, expand(1n, pool.decimals0)), expand(1n, pool.decimals1));
-                prices.push({
-                    dex,
-                    fee,
-                    price: adjustedPrice,
-                    type: 'V3',
-                    liquidity: feeData.liquidity,
-                    sqrtPriceX96: feeData.sqrtPriceX96
-                });
+                prices.push({ dex, fee, price, type: 'V3', liquidity: feeData.liquidity, sqrtPriceX96: feeData.sqrtPriceX96 });
             }
         }
     }
@@ -59,29 +45,115 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
     const loanTokenAddress = LOAN_TOKENS[loanTokenSymbol];
     console.log(`\n[MULTI-HOP] Searching for ${loanTokenSymbol} arbitrage routes...`);
 
-    for (const token1Symbol in pools) {
-        if (!token1Symbol.startsWith(loanTokenSymbol) && !token1Symbol.endsWith(loanTokenSymbol)) continue;
+    for (const pair1Key in pools) {
+        const [token0, token1] = pair1Key.split('-');
+        if (token0 !== loanTokenSymbol && token1 !== loanTokenSymbol) continue;
 
-        const pair1Key = token1Symbol;
         const prices1 = getPrices(pair1Key);
         if (prices1.length === 0) continue;
 
-        const otherTokenSymbol = token1Symbol.replace(loanTokenSymbol, '').replace('-', '');
+        const intermediateTokenSymbol = (token0 === loanTokenSymbol) ? token1 : token0;
+        const intermediateTokenAddress = (getAddress(pools[pair1Key].token0) === loanTokenAddress) ? getAddress(pools[pair1Key].token1) : getAddress(pools[pair1Key].token0);
 
-        for (const token2Symbol in pools) {
-            if (token2Symbol.startsWith(otherTokenSymbol) && !token2Symbol.endsWith(loanTokenSymbol)) {
-                const pair2Key = token2Symbol;
+        for (const pair2Key in pools) {
+            const [token2, token3] = pair2Key.split('-');
+            if ((token2 === intermediateTokenSymbol && token3 === loanTokenSymbol) || (token3 === intermediateTokenSymbol && token2 === loanTokenSymbol)) {
+
                 const prices2 = getPrices(pair2Key);
                 if (prices2.length === 0) continue;
 
-                const finalTokenSymbol = token2Symbol.replace(otherTokenSymbol, '').replace('-', '');
-                if (finalTokenSymbol !== loanTokenSymbol) continue; // We must end with the loan token
-
                 for (const price1 of prices1) {
                     for (const price2 of prices2) {
-                        // This is a placeholder for a more complex multi-hop profit calculation
-                        // For now, we just log the path
-                        console.log(`[MULTI-HOP PATH] ${loanTokenSymbol} -> ${otherTokenSymbol} -> ${finalTokenSymbol} via ${price1.dex} and ${price2.dex}`)
+                        
+                        let loanAmount;
+                        // For now, only calculate optimal loan for V2 -> V2 paths
+                        if (price1.type === 'V2' && price2.type === 'V2') {
+                            loanAmount = getOptimalV2AmountIn(price1.reserve1, price1.reserve0, price2.reserve0, price2.reserve1);
+                        } else {
+                            loanAmount = div(mul(price1.reserve1, bn(BOT_CONFIG.LOAN_PERCENTAGE)), 100n);
+                        }
+
+                        if (loanAmount <= 0n) continue;
+
+                        let amountOut1, finalAmountOut;
+                        try {
+                            if (price1.type === 'V2') {
+                                amountOut1 = getV2AmountOut(loanAmount, price1.reserve1, price1.reserve0);
+                            } else {
+                                amountOut1 = getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
+                            }
+
+                            if (price2.type === 'V2') {
+                                finalAmountOut = getV2AmountOut(amountOut1, price2.reserve0, price2.reserve1);
+                            } else {
+                                finalAmountOut = getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
+                            }
+                        } catch (e) {
+                            continue;
+                        }
+
+                        const grossProfit = sub(finalAmountOut, loanAmount);
+                        const aaveFee = mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE * 10000)) / 10000n;
+                        let netProfit = sub(grossProfit, aaveFee);
+
+                        if (netProfit <= 0n) continue;
+
+                        const swapPath = [];
+                        const swapsV2 = [];
+                        const swapsV3 = [];
+
+                        // Hop 1
+                        if (price1.type === 'V2') {
+                            swapPath.push({ stepType: SWAP_STEP_TYPES.V2, index: swapsV2.length });
+                            const dexConfig = DEX_CONFIG.base[price1.dex];
+                            const swapData = AbiCoder.defaultAbiCoder().encode(['address[]','bool[]','address'], [[loanTokenAddress, intermediateTokenAddress], [pools[pair1Key].dexes[price1.dex].stable], dexConfig.factory]);
+                            swapsV2.push({ router: dexConfig.router, path: [loanTokenAddress, intermediateTokenAddress], amountOutMin: 0, dexType: V2_DEX_TYPES[price1.dex], data: swapData });
+                        } else {
+                            swapPath.push({ stepType: SWAP_STEP_TYPES.V3, index: swapsV3.length });
+                            swapsV3.push({ router: DEX_CONFIG.base[price1.dex].router, pool: pools[pair1Key].dexes[price1.dex].fees[price1.fee].address, tokenIn: loanTokenAddress, tokenOut: intermediateTokenAddress, amountOutMin: 0, dexType: V3_DEX_TYPES[price1.dex] });
+                        }
+
+                        // Hop 2
+                        if (price2.type === 'V2') {
+                            swapPath.push({ stepType: SWAP_STEP_TYPES.V2, index: swapsV2.length });
+                            const dexConfig = DEX_CONFIG.base[price2.dex];
+                            const swapData = AbiCoder.defaultAbiCoder().encode(['address[]','bool[]','address'], [[intermediateTokenAddress, loanTokenAddress], [pools[pair2Key].dexes[price2.dex].stable], dexConfig.factory]);
+                            swapsV2.push({ router: dexConfig.router, path: [intermediateTokenAddress, loanTokenAddress], amountOutMin: 0, dexType: V2_DEX_TYPES[price2.dex], data: swapData });
+                        } else {
+                            swapPath.push({ stepType: SWAP_STEP_TYPES.V3, index: swapsV3.length });
+                            swapsV3.push({ router: DEX_CONFIG.base[price2.dex].router, pool: pools[pair2Key].dexes[price2.dex].fees[price2.fee].address, tokenIn: intermediateTokenAddress, tokenOut: loanTokenAddress, amountOutMin: 0, dexType: V3_DEX_TYPES[price2.dex] });
+                        }
+                        
+                        try {
+                            const arbitrageContract = getArbitrageContract();
+                            const provider = getExecutionProvider();
+                            const feeData = await provider.getFeeData();
+                            const gasPrice = feeData.gasPrice;
+                            if (!gasPrice || gasPrice === 0n) continue;
+
+                            const estimatedGas = await arbitrageContract.executeArbitrage.estimateGas(loanTokenAddress, loanAmount, swapPath, swapsV3, swapsV2);
+                            const gasLimit = div(mul(estimatedGas, 120n), 100n);
+                            const txCost = mul(gasPrice, gasLimit);
+
+                            const ethPriceInLoanToken = 3000n * expand(1n, TOKEN_DECIMALS.base[loanTokenSymbol]); // Placeholder
+                            const txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
+
+                            netProfit = sub(netProfit, txCostInLoanToken);
+                        } catch(e) {
+                            continue;
+                        }
+
+                        if (netProfit <= 0n) continue;
+                        
+                        const profitBps = div(mul(netProfit, 10000n), loanAmount);
+                        if (profitBps >= bn(BOT_CONFIG.MIN_PROFIT_BPS)) {
+                            const profitPercentage = (Number(profitBps) / 100).toFixed(2);
+                            const opportunityPath = `${loanTokenSymbol} -> ${intermediateTokenSymbol} -> ${loanTokenSymbol} via ${price1.dex} & ${price2.dex}`;
+                            
+                            console.log(`\n################################################################################\nMULTI-HOP OPPORTUNITY DETECTED\n--------------------------------------------------------------------------------\nPath: ${opportunityPath}\nEst. Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
+                            
+                            await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]) });
+                        }
                     }
                 }
             }
@@ -96,18 +168,18 @@ async function calculateAndExecuteOpportunities(pairKey) {
     const bestBuy = prices.reduce((a, b) => a.price < b.price ? a : b);
     const bestSell = prices.reduce((a, b) => a.price > b.price ? a : b);
 
-    const profit = sub(bestSell.price, bestBuy.price);
+    if (bestSell.price <= bestBuy.price) return;
 
-    if (profit > 0n) {
-        const pool = pools[pairKey];
-        const loanToken = pool.token1;
-        const tradeToken = pool.token0;
-        const loanTokenSymbol = pool.token1Symbol;
-        const tradeTokenSymbol = pool.token0Symbol;
+    const pool = pools[pairKey];
+    const loanToken = pool.token1;
+    const tradeToken = pool.token0;
+    const loanTokenSymbol = pool.token1Symbol;
 
-        let loanAmount;
+    let loanAmount;
+    if (bestBuy.type === 'V2' && bestSell.type === 'V2') {
+        loanAmount = getOptimalV2AmountIn(bestBuy.reserve1, bestBuy.reserve0, bestSell.reserve0, bestSell.reserve1);
+    } else {
         const loanPercentage = bn(BOT_CONFIG.LOAN_PERCENTAGE);
-
         if (bestBuy.type === 'V2') {
             loanAmount = div(mul(bestBuy.reserve1, loanPercentage), 100n);
         } else { // V3
@@ -115,56 +187,89 @@ async function calculateAndExecuteOpportunities(pairKey) {
             const reserve1_v3 = div(mul(bestBuy.liquidity, bestBuy.sqrtPriceX96), Q96);
             loanAmount = div(mul(reserve1_v3, loanPercentage), 100n);
         }
+    }
 
-        if (loanAmount <= 0n) {
-            return;
-        }
+    if (loanAmount <= 0n) return;
 
-        let amountOutFromBuy;
-        let amountOutFromSell;
-
-        try {
-            if (bestBuy.type === 'V2') {
-                const buyPool = pools[pairKey].dexes[bestBuy.dex];
-                amountOutFromBuy = getV2AmountOut(loanAmount, buyPool.reserve1, buyPool.reserve0);
-            } else { // V3
-                const buyPool = pools[pairKey].dexes[bestBuy.dex].fees[bestBuy.fee];
-                amountOutFromBuy = getV3AmountOut(loanAmount, buyPool.sqrtPriceX96, buyPool.liquidity, pool.token1, pool.token0, pool.decimals1, pool.decimals0);
-            }
-
-            if (amountOutFromBuy <= 0n) {
-                return;
-            }
-
-            if (bestSell.type === 'V2') {
-                const sellPool = pools[pairKey].dexes[bestSell.dex];
-                amountOutFromSell = getV2AmountOut(amountOutFromBuy, sellPool.reserve0, sellPool.reserve1);
-            } else { // V3
-                const sellPool = pools[pairKey].dexes[bestSell.dex].fees[bestSell.fee];
-                amountOutFromSell = getV3AmountOut(amountOutFromBuy, sellPool.sqrtPriceX96, sellPool.liquidity, pool.token0, pool.token1, pool.decimals0, pool.decimals1);
-            }
-
-            if (amountOutFromSell <= 0n) {
-                return;
-            }
-        } catch (e) {
-            return;
-        }
-
-        const netProfit = sub(amountOutFromSell, loanAmount);
-        const minProfit = ethers.parseUnits(BOT_CONFIG.MIN_PROFIT_THRESHOLD_ETH, TOKEN_DECIMALS.base[loanTokenSymbol]);
-
-        if (netProfit > minProfit) {
-            const profitBps = div(mul(netProfit, 10000n), loanAmount);
-            const profitPercentage = (Number(profitBps) / 100).toFixed(2);
-
-            console.log(`\n################################################################################\nOPPORTUNITY DETECTED on ${pairKey}\n--------------------------------------------------------------------------------\nBuy on: ${bestBuy.dex} (${bestBuy.type}${bestBuy.fee ? ` @ ${bestBuy.fee} fee` : ''})\nSell on: ${bestSell.dex} (${bestSell.type}${bestSell.fee ? ` @ ${bestSell.fee} fee` : ''})\nEst. Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
-            console.log('>>> Pausing for 20 second to avoid rate-limiting before execution...');
-            await new Promise(resolve => setTimeout(resolve, 20000));
-            await executeArbitrage(bestBuy, bestSell, pairKey);
+    let amountOutFromBuy, amountOutFromSell;
+    try {
+        if (bestBuy.type === 'V2') {
+            amountOutFromBuy = getV2AmountOut(loanAmount, bestBuy.reserve1, bestBuy.reserve0);
         } else {
-            // console.log(`- ${pairKey}: Discarded (profit of ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} is too low)`);
+            amountOutFromBuy = getV3AmountOut(loanAmount, bestBuy.sqrtPriceX96, bestBuy.liquidity, pool.token1, pool.token0, pool.decimals1, pool.decimals0);
         }
+
+        if (bestSell.type === 'V2') {
+            amountOutFromSell = getV2AmountOut(amountOutFromBuy, bestSell.reserve0, bestSell.reserve1);
+        } else {
+            amountOutFromSell = getV3AmountOut(amountOutFromBuy, bestSell.sqrtPriceX96, bestSell.liquidity, pool.token0, pool.token1, pool.decimals0, pool.decimals1);
+        }
+    } catch (e) {
+        return;
+    }
+
+    const grossProfit = sub(amountOutFromSell, loanAmount);
+    const aaveFee = mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE * 10000)) / 10000n;
+    let netProfit = sub(grossProfit, aaveFee);
+
+    if (netProfit <= 0n) return;
+
+    const swapPath = [];
+    const swapsV2 = [];
+    const swapsV3 = [];
+
+    if (bestBuy.type === 'V2') {
+        swapPath.push({ stepType: SWAP_STEP_TYPES.V2, index: swapsV2.length });
+        const dexConfig = DEX_CONFIG.base[bestBuy.dex];
+        const swapData = AbiCoder.defaultAbiCoder().encode(['address[]','bool[]','address'], [[loanToken, tradeToken], [pool.dexes[bestBuy.dex].stable], dexConfig.factory]);
+        swapsV2.push({ router: dexConfig.router, path: [loanToken, tradeToken], amountOutMin: 0, dexType: V2_DEX_TYPES[bestBuy.dex], data: swapData });
+    } else {
+        swapPath.push({ stepType: SWAP_STEP_TYPES.V3, index: swapsV3.length });
+        swapsV3.push({ router: DEX_CONFIG.base[bestBuy.dex].router, pool: pools[pairKey].dexes[bestBuy.dex].fees[bestBuy.fee].address, tokenIn: loanToken, tokenOut: tradeToken, amountOutMin: 0, dexType: V3_DEX_TYPES[bestBuy.dex] });
+    }
+
+    if (bestSell.type === 'V2') {
+        swapPath.push({ stepType: SWAP_STEP_TYPES.V2, index: swapsV2.length });
+        const dexConfig = DEX_CONFIG.base[bestSell.dex];
+        const swapData = AbiCoder.defaultAbiCoder().encode(['address[]','bool[]','address'], [[tradeToken, loanToken], [pool.dexes[bestSell.dex].stable], dexConfig.factory]);
+        swapsV2.push({ router: dexConfig.router, path: [tradeToken, loanToken], amountOutMin: 0, dexType: V2_DEX_TYPES[bestSell.dex], data: swapData });
+    } else {
+        swapPath.push({ stepType: SWAP_STEP_TYPES.V3, index: swapsV3.length });
+        swapsV3.push({ router: DEX_CONFIG.base[bestSell.dex].router, pool: pools[pairKey].dexes[bestSell.dex].fees[bestSell.fee].address, tokenIn: tradeToken, tokenOut: loanToken, amountOutMin: 0, dexType: V3_DEX_TYPES[bestSell.dex] });
+    }
+
+    try {
+        const arbitrageContract = getArbitrageContract();
+        const provider = getExecutionProvider();
+        const feeData = await provider.getFeeData();
+        const gasPrice = feeData.gasPrice;
+
+        if (!gasPrice || gasPrice === 0n) return;
+
+        const estimatedGas = await arbitrageContract.executeArbitrage.estimateGas(loanToken, loanAmount, swapPath, swapsV3, swapsV2);
+        const gasLimit = div(mul(estimatedGas, 120n), 100n);
+        const txCost = mul(gasPrice, gasLimit);
+        
+        const ethPriceInLoanToken = 3000n * expand(1n, TOKEN_DECIMALS.base[loanTokenSymbol]); // Placeholder
+        const txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
+        
+        netProfit = sub(netProfit, txCostInLoanToken);
+
+    } catch (e) {
+        return;
+    }
+
+    if (netProfit <= 0n) return;
+
+    const profitBps = div(mul(netProfit, 10000n), loanAmount);
+
+    if (profitBps >= bn(BOT_CONFIG.MIN_PROFIT_BPS)) {
+        const profitPercentage = (Number(profitBps) / 100).toFixed(2);
+        const opportunityPath = `${bestBuy.dex} -> ${bestSell.dex}`;
+
+        console.log(`\n################################################################################\nOPPORTUNITY DETECTED on ${pairKey}\n--------------------------------------------------------------------------------\nPath: ${opportunityPath}\nEst. Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
+
+        await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]) });
     }
 }
 
@@ -252,7 +357,6 @@ function listenToEvents() {
                 await calculateAndExecuteOpportunities(pairKey);
             }
 
-            // Multi-hop search
             for (const loanTokenSymbol of Object.keys(LOAN_TOKENS)) {
                 await findBestMultiHopOpportunity(loanTokenSymbol);
             }

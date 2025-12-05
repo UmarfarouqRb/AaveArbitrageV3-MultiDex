@@ -45,6 +45,7 @@ const TOKENS = {
         SEAM: getAddress('0x1c7a460413dd4e964f96d8dfc56e7223ce82cf0a'),
         TN100X: getAddress('0x554c9251a3501f65523f22144d13374b43aa9d6b'),
         NORMIE: getAddress('0x7f12d13b34f5f4f0a9449c16bcd42f0da47af200'),
+        SNX: getAddress('0x22e6db5b2804e332610a17541755490a140f6a5e'),
     }
 };
 
@@ -52,7 +53,7 @@ const TOKEN_DECIMALS = {
     base: {
         WETH: 18, USDC: 6, cbBTC: 8, DAI: 18, DEGEN: 18, BRETT: 18, AERO: 18, cbETH: 18,
         HIGHER: 18, FRIEND: 18, MFER: 18, TOSHI: 18, DOGINME: 18, TYBG: 18, BALD: 18,
-        SEAM: 18, TN100X: 18, NORMIE: 18,
+        SEAM: 18, TN100X: 18, NORMIE: 18, SNX: 18,
     }
 };
 
@@ -134,7 +135,7 @@ const BOT_CONFIG = {
     DRY_RUN: false,
     ARBITRAGE_CONTRACT_ADDRESS: getAddress('0x8b4714d43343afc179a34ced72e4a5672d8c4395'),
     MIN_PROFIT_THRESHOLD_ETH: '0', // Minimum profit in ETH to trigger a trade
-    MIN_PROFIT_BPS: 20,
+    MIN_PROFIT_BPS: 0, // Set to 0 for more trades
     GAS_PRICE_STRATEGY: 'fast',
     GAS_LIMIT: '1000000',
     AAVE_FLASH_LOAN_FEE: 0.0009, // 0.09%
