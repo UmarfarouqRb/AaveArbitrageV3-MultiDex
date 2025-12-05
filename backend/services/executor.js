@@ -41,6 +41,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
     const loanToken = pool.token1;
     const tradeToken = pool.token0;
     const loanTokenSymbol = pool.token1Symbol;
+    const tradeTokenSymbol = pool.token0Symbol;
 
     let loanAmount;
     const loanPercentage = bn(BOT_CONFIG.LOAN_PERCENTAGE);
@@ -54,6 +55,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
     }
 
     if (loanAmount <= 0n) {
+        console.log(`[${pairKey}] Discarded: Loan amount is zero or negative.`);
         return;
     }
 
@@ -70,6 +72,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         }
 
         if (amountOutFromBuy <= 0n) {
+            console.log(`[${pairKey}] Discarded: Initial trade yields zero or negative.`);
             return;
         }
 
@@ -82,6 +85,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         }
 
         if (amountOutFromSell <= 0n) {
+            console.log(`[${pairKey}] Discarded: Second trade yields zero or negative.`);
             return;
         }
     } catch (e) {
@@ -93,6 +97,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
     const minProfit = ethers.parseUnits(BOT_CONFIG.MIN_PROFIT_THRESHOLD_ETH, TOKEN_DECIMALS.base[loanTokenSymbol]);
 
     if (netProfit <= minProfit) {
+        console.log(`[${pairKey}] Discarded: Profit of ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} is below threshold.`);
         return;
     }
 
@@ -168,10 +173,20 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
 
     if (BOT_CONFIG.DRY_RUN) {
         const profitString = formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]);
-        console.log(`\nOPPORTUNITY FOUND (DRY RUN):`);
-        console.log(`- Loan: ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}`);
-        console.log(`- Path: ${buyDex.dex} -> ${sellDex.dex}`);
-        console.log(`- Est. Profit: ${profitString} ${loanTokenSymbol}\n`);
+        console.log(`
+--------------------------------------------------------------------------------
+[DRY RUN] Opportunity Found on ${pairKey}
+--------------------------------------------------------------------------------
+  - Loan: ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}
+  - Path: ${buyDex.dex} -> ${sellDex.dex}
+  - Steps:
+    1. Flashloan ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} from Aave
+    2. Swap ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} for ${formatUnits(amountOutFromBuy, TOKEN_DECIMALS.base[tradeTokenSymbol])} ${tradeTokenSymbol} on ${buyDex.dex}
+    3. Swap ${formatUnits(amountOutFromBuy, TOKEN_DECIMALS.base[tradeTokenSymbol])} ${tradeTokenSymbol} for ${formatUnits(amountOutFromSell, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} on ${sellDex.dex}
+    4. Repay ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} to Aave
+  - Gross Profit: ${profitString} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+`);
 
         broadcast({
             type: 'opportunity',
@@ -185,6 +200,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         });
         return;
     }
+
     let receipt;
     try {
         const arbitrageContract = getArbitrageContract();
@@ -193,7 +209,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         const gasPrice = feeData.gasPrice;
 
         if (!gasPrice || gasPrice === 0n) {
-            console.log(`DISCARDED: Could not retrieve gas price.`);
+            console.log(`[${pairKey}] Discarded: Could not retrieve gas price.`);
             return;
         }
 
@@ -201,21 +217,45 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         const gasLimit = div(mul(estimatedGas, 120n), 100n);
         const txCost = mul(gasPrice, gasLimit);
 
-        if (sub(netProfit, txCost) <= 0n) {
-            console.log(`DISCARDED: Profit of ${formatUnits(netProfit, 18)} is less than estimated gas cost of ${formatUnits(txCost, 18)}.`);
+        const netProfitAfterGas = sub(netProfit, txCost);
+
+        if (netProfitAfterGas <= 0n) {
+            console.log(`[${pairKey}] Discarded: Profit of ${formatUnits(netProfit, 18)} is less than estimated gas cost of ${formatUnits(txCost, 18)}.`);
             return;
         }
-        console.log(`\n>>> EXECUTING TRADE on ${pairKey} for an est. profit of ${formatUnits(sub(netProfit, txCost), TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}...`);
+
+        console.log(`
+--------------------------------------------------------------------------------
+>>> EXECUTING TRADE on ${pairKey}...
+--------------------------------------------------------------------------------
+  - Loan: ${formatUnits(loanAmount, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}
+  - Path: ${buyDex.dex} -> ${sellDex.dex}
+  - Est. Gross Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}
+  - Est. Tx Cost: ${formatUnits(txCost, 18)} ETH
+  - Est. Net Profit: ${formatUnits(netProfitAfterGas, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+`);
 
         const tx = await arbitrageContract.executeArbitrage(loanToken, loanAmount, swapPath, swapsV3, swapsV2, { gasLimit: Number(gasLimit) });
         receipt = await tx.wait();
 
         const profitString = formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]);
 
-        console.log(`\nTRADE CONFIRMED:`);
-        console.log(`- Tx Hash: ${receipt.transactionHash}`);
-        console.log(`- Status: ${receipt.status === 1 ? 'Confirmed' : 'Reverted'}`);
-        console.log(`- Profit: ${profitString} ${loanTokenSymbol}\n`);
+        if (receipt.status === 1) {
+            console.log(`
+--------------------------------------------------------------------------------
+✅ TRADE CONFIRMED on ${pairKey}
+--------------------------------------------------------------------------------
+  - Tx Hash: ${receipt.transactionHash}
+  - Gross Profit: ${profitString} ${loanTokenSymbol}
+  - Gas Used: ${formatUnits(receipt.gasUsed, 0)}
+  - Gas Price: ${formatUnits(receipt.effectiveGasPrice, 9)} Gwei
+  - Tx Cost: ${formatUnits(mul(receipt.gasUsed, receipt.effectiveGasPrice), 18)} ETH
+--------------------------------------------------------------------------------
+`);
+        } else {
+            throw new Error('Transaction reverted on-chain');
+        }
 
         await recordTrade({
             timestamp: new Date().toISOString(),
@@ -230,14 +270,27 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
         });
 
     } catch (error) {
-        console.error("\nTRADE FAILED. Full error:", error);
-        const errorMessage = error.reason || (error.error ? error.error.message : (receipt ? "Transaction Reverted" : "Unknown error"));
+        console.error(`
+--------------------------------------------------------------------------------
+❌ TRADE FAILED on ${pairKey}
+--------------------------------------------------------------------------------
+`);
+        if (receipt) {
+            console.error(`  - Tx Hash: ${receipt.transactionHash}`);
+            console.error(`  - Status: Reverted`);
+            console.error(`  - Gas Used: ${formatUnits(receipt.gasUsed, 0)}`);
+        }
+        console.error(`  - Reason: ${error.reason || (error.error ? error.error.message : error.message)}`);
+        console.error(`--------------------------------------------------------------------------------
+`);
+
         broadcast({
             type: 'error',
             data: {
-                message: `Trade failed for ${pairKey}: ${errorMessage}`
+                message: `Trade failed for ${pairKey}: ${error.reason || (error.error ? error.error.message : error.message)}`
             }
         });
+
         if (receipt) {
             await recordTrade({
                 timestamp: new Date().toISOString(),

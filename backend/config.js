@@ -140,7 +140,7 @@ const BOT_CONFIG = {
     AAVE_FLASH_LOAN_FEE: 0.0009, // 0.09%
     ESTIMATED_GAS_COST_ETH: '0', // Estimated gas cost in ETH
     LOAN_PERCENTAGE: 5, // 5% of the pool's reserve
-    RECONCILIATION_TIMEOUT: 10000, // 10 seconds
+    RECONCILIATION_TIMEOUT: 30000, // 30 seconds
 };
 
 module.exports = {
