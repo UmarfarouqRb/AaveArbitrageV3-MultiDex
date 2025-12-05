@@ -1,14 +1,21 @@
 const { ethers, getAddress, AbiCoder } = require('ethers');
-const { ARBITRAGE_PAIRS, TOKENS, TOKEN_DECIMALS, DEX_ROUTERS, V3_FEE_TIERS } = require('../config');
+const { ARBITRAGE_PAIRS, TOKENS, TOKEN_DECIMALS, DEX_CONFIG } = require('../config');
 const { bn } = require('../utils/bigints');
-const IUniswapV3Pool_ABI = require('../abis/IUniswapV3Pool.json').abi;
-const { getProvider } = require('./provider.js');
+const IUniswapV3Pool_ABI = require('../abis/uniswapV3/pool.json');
+const IPancakeV3Pool_ABI = require('../abis/pancakeV3/pool.json');
+const IUniswapV2Factory_ABI = require('../abis/uniswapV2/factory.json');
+const IUniswapV2Pair_ABI = require('../abis/uniswapV2/pair.json');
+const ISushiV2Factory_ABI = require('../abis/sushiV2/factory.json');
+const ISushiV2Pair_ABI = require('../abis/sushiV2/pair.json');
+const IAerodromeFactory_ABI = require('../abis/aerodrome/factory.json');
+const IAerodromePair_ABI = require('../abis/aerodrome/pair.json');
+const { getScanningProvider } = require('./provider.js');
 
 const pools = {};
 
 async function initializePools() {
     console.log("Initializing pools...");
-    const provider = getProvider();
+    const provider = getScanningProvider();
 
     for (const pair of ARBITRAGE_PAIRS) {
         let [tokenA_address, tokenB_address] = pair;
@@ -34,28 +41,38 @@ async function initializePools() {
             dexes: {}
         };
 
-        for (const dex in DEX_ROUTERS.base) {
-            const routerConfig = DEX_ROUTERS.base[dex];
-            if (routerConfig.factory) { // V2-like DEX
-                const factoryContract = new ethers.Contract(routerConfig.factory, ['function getPair(address, address, bool) view returns (address)'], provider);
-                for (const isStable of [true, false]) {
-                     try {
-                        const pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address, isStable);
-                        if (pairAddress && getAddress(pairAddress) !== ethers.ZeroAddress) {
-                            pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: isStable };
-                            await updateV2Pool(pairKey, dex);
-                            console.log(`Initialized V2 pool for ${pairKey} on ${dex} (stable: ${isStable})`);
-                        }
-                    } catch (e) { /* silent fail */ }
+        for (const dex in DEX_CONFIG.base) {
+            const dexConfig = DEX_CONFIG.base[dex];
+            if (dexConfig.type === 'V2') {
+                let factoryAbi;
+                if (dex === 'AerodromeV2') {
+                    factoryAbi = IAerodromeFactory_ABI;
+                } else if (dex === 'SushiswapV2') {
+                    factoryAbi = ISushiV2Factory_ABI;
+                } else {
+                    factoryAbi = IUniswapV2Factory_ABI;
                 }
-            } else if (routerConfig.factory_v3) { // V3-like DEX
-                if (!V3_FEE_TIERS[dex]) continue;
-                const factoryContract = new ethers.Contract(routerConfig.factory_v3, ['function getPool(address, address, uint24) view returns (address)'], provider);
+                const factoryContract = new ethers.Contract(dexConfig.factory, factoryAbi, provider);
+                const isStable = !!dexConfig.stable;
+                try {
+                    const pairAddress = await factoryContract.getPair(tokenA_address, tokenB_address, isStable);
+                    if (pairAddress && getAddress(pairAddress) !== ethers.ZeroAddress) {
+                        const code = await provider.getCode(pairAddress);
+                        if (code === '0x') continue; // Not a contract
+                        pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: isStable };
+                        await updateV2Pool(pairKey, dex);
+                        console.log(`Initialized V2 pool for ${pairKey} on ${dex} (stable: ${isStable})`);
+                    }
+                } catch (e) { /* silent fail */ }
+            } else if (dexConfig.type === 'V3') {
+                const factoryContract = new ethers.Contract(dexConfig.factory, ['function getPool(address, address, uint24) view returns (address)'], provider);
                 pools[pairKey].dexes[dex] = { type: 'V3', fees: {} };
-                for (const fee of V3_FEE_TIERS[dex]) {
+                for (const fee of dexConfig.fees) {
                     try {
                         const poolAddress = await factoryContract.getPool(tokenA_address, tokenB_address, fee);
                         if (poolAddress && getAddress(poolAddress) !== ethers.ZeroAddress) {
+                            const code = await provider.getCode(poolAddress);
+                            if (code === '0x') continue; // Not a contract
                             pools[pairKey].dexes[dex].fees[fee] = { address: poolAddress };
                             await updateV3Pool(pairKey, dex, fee);
                             console.log(`Initialized V3 pool for ${pairKey} on ${dex} with fee ${fee}`);
@@ -68,7 +85,7 @@ async function initializePools() {
 }
 
 async function updateV2Pool(pairKey, dex, log = null) {
-    const provider = getProvider();
+    const provider = getScanningProvider();
     const poolData = pools[pairKey]?.dexes[dex];
     if (!poolData || poolData.type !== 'V2') return;
 
@@ -78,7 +95,15 @@ async function updateV2Pool(pairKey, dex, log = null) {
         poolData.reserve1 = bn(reserve1);
     } else {
         try {
-            const pairContract = new ethers.Contract(poolData.address, ['function getReserves() view returns (uint112, uint112, uint32)'], provider);
+            let pairAbi;
+            if (dex === 'AerodromeV2') {
+                pairAbi = IAerodromePair_ABI;
+            } else if (dex === 'SushiswapV2') {
+                pairAbi = ISushiV2Pair_ABI;
+            } else {
+                pairAbi = IUniswapV2Pair_ABI;
+            }
+            const pairContract = new ethers.Contract(poolData.address, pairAbi, provider);
             const reserves = await pairContract.getReserves();
             if (reserves && reserves.length >= 2) {
                 poolData.reserve0 = bn(reserves[0]);
@@ -91,7 +116,7 @@ async function updateV2Pool(pairKey, dex, log = null) {
 }
 
 async function updateV3Pool(pairKey, dex, fee, log = null) {
-    const provider = getProvider();
+    const provider = getScanningProvider();
     const feeData = pools[pairKey]?.dexes[dex]?.fees[fee];
     if (!feeData) return;
 
@@ -101,7 +126,13 @@ async function updateV3Pool(pairKey, dex, fee, log = null) {
         feeData.liquidity = bn(liquidity);
     } else {
         try {
-            const poolContract = new ethers.Contract(feeData.address, IUniswapV3Pool_ABI, provider);
+            let poolAbi;
+            if (dex === 'PancakeV3') {
+                poolAbi = IPancakeV3Pool_ABI;
+            } else { // Default to Uniswap V3 ABI
+                poolAbi = IUniswapV3Pool_ABI;
+            }
+            const poolContract = new ethers.Contract(feeData.address, poolAbi, provider);
             const [slot0, liquidity] = await Promise.all([
                 poolContract.slot0(),
                 poolContract.liquidity()

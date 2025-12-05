@@ -9,6 +9,21 @@ const NETWORKS = {
     }
 };
 
+// --- ABI Configuration ---
+const ABIS = {
+    AaveArbitrageV3: require('./abis/AaveArbitrageV3.json').abi,
+    IUniswapV2Router: require('./abis/uniswapV2/router.json'),
+    IAerodromeRouter: require('./abis/aerodrome/router.json'),
+    IUniswapV3QuoterV2: require('./abis/uniswapV3/quoterV2.json'),
+    IPancakeV3QuoterV2: require('./abis/pancakeV3/quoterV2.json'),
+    IUniswapV3Factory: require('./abis/uniswapV3/factory.json'),
+    IPancakeV3Factory: require('./abis/pancakeV3/factory.json'),
+    IPancakeV3Pool: require('./abis/pancakeV3/pool.json'),
+    IPancakeV3Router: require('./abis/pancakeV3/router.json'),
+    IUniswapV3Pool: require('./abis/uniswapV3/pool.json'),
+    IUniswapV3Router: require('./abis/uniswapV3/router.json'),
+};
+
 // --- Token Configuration ---
 const TOKENS = {
     base: {
@@ -42,43 +57,43 @@ const TOKEN_DECIMALS = {
 };
 
 // --- DEX Configuration ---
-const DEX_ROUTERS = {
+const DEX_CONFIG = {
     base: {
-        'AerodromeV2': {
-            router: getAddress('0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43'),
-            factory: getAddress('0x420dd381b31aef6683db6b902084cb0ffcec40da'),
-            stable: false, // Default to volatile
+        'UniswapV3': {
+            type: 'V3',
+            router: '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+            factory: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+            quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+            init_code_hash: '0xe34f9a62d249bca7b1b64e4806c8c3d53295d85f1e4b74e6a1fde37d399a8ce0',
+            fees: [100, 500, 3000, 10000],
         },
         'PancakeV3': {
-            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
-            factory_v3: getAddress('0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865'),
+            type: 'V3',
+            router: '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+            factory: '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865',
+            quoter: '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997',
+            init_code_hash: '0x9f3f3fb0795eae36f553fea7d06bb74c71e8dc72420352cc248d60cdb8e5983b',
+            fees: [100, 500, 2500],
         },
-        'UniswapV3': {
-            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
-            factory_v3: getAddress('0x33128a8fC17869897dcE68Ed026d694621f6FDfD'),
+        'AerodromeV2': {
+            type: 'V2',
+            router: '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43',
+            factory: '0x420DD381b31aEf6683db6B902084cB0FFECe40Da',
+            stable: false, // Default to volatile
         },
         'UniswapV2': {
-            router: getAddress('0x1b81D678ffb9C0263b24A97847620C99d213eB14'),
-            factory: getAddress('0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6'),
+            type: 'V2',
+            router: '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+            factory: '0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6',
         },
         'SushiswapV2': {
-            router: getAddress('0x6bded42c6da8fbf0d2ba55b2fa120c5e0c8d7891'),
-            factory: getAddress('0x71524B4f93c58fcbF659783284E38825f0622859'),
+            type: 'V2',
+            router: '0x6BDED42c6DA8FBf0d2ba55B2fa120C5e0c8D7891',
+            factory: '0x71524B4f93c58fcbF659783284E38825f0622859',
         }
     }
 };
 
-const DEX_QUOTERS = {
-    base: {
-        'PancakeV3': getAddress('0x2fF35e3A5ddBb1e90b43a1CdE3c5aaB2F24806A8'),
-        'UniswapV3': getAddress('0x3d4Cba59AAE52d07b34E78E254e49fD94f93bD71'),
-    }
-};
-
-const V3_FEE_TIERS = {
-    'PancakeV3': [100, 500, 2500, 10000],
-    'UniswapV3': [100, 500, 3000, 10000],
-};
 
 // --- Contract Enum Mappings ---
 // These MUST match the enums in the smart contract
@@ -118,22 +133,22 @@ const ARBITRAGE_PAIRS = Object.values(LOAN_TOKENS).flatMap(loanToken =>
 const BOT_CONFIG = {
     DRY_RUN: false,
     ARBITRAGE_CONTRACT_ADDRESS: getAddress('0x8b4714d43343afc179a34ced72e4a5672d8c4395'),
-    MIN_PROFIT_THRESHOLD_ETH: '0.0001', // Minimum profit in ETH to trigger a trade
+    MIN_PROFIT_THRESHOLD_ETH: '0', // Minimum profit in ETH to trigger a trade
     MIN_PROFIT_BPS: 20,
     GAS_PRICE_STRATEGY: 'fast',
     GAS_LIMIT: '1000000',
     AAVE_FLASH_LOAN_FEE: 0.0009, // 0.09%
     ESTIMATED_GAS_COST_ETH: '0', // Estimated gas cost in ETH
-    LOAN_PERCENTAGE: 1, // 1% of the pool's reserve
+    LOAN_PERCENTAGE: 5, // 5% of the pool's reserve
+    RECONCILIATION_TIMEOUT: 10000, // 10 seconds
 };
 
 module.exports = {
     NETWORKS,
+    ABIS,
     TOKENS,
     TOKEN_DECIMALS,
-    DEX_ROUTERS,
-    DEX_QUOTERS,
-    V3_FEE_TIERS,
+    DEX_CONFIG,
     SWAP_STEP_TYPES,
     V2_DEX_TYPES,
     V3_DEX_TYPES,

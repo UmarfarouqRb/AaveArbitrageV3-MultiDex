@@ -5,7 +5,7 @@ const { getPriceFromV2 } = require('../core/v2');
 const { getPriceFromV3 } = require('../core/v3');
 const { executeArbitrage } = require('./executor');
 const { BOT_CONFIG } = require('../config');
-const { getProvider } = require('../core/provider.js');
+const { getScanningProvider } = require('../core/provider.js');
 
 const SWAP_EVENT_TOPIC_V2 = keccak256(toUtf8Bytes("Sync(uint112,uint112)"));
 const SWAP_EVENT_TOPIC_V3 = keccak256(toUtf8Bytes("Swap(address,address,int256,int256,uint160,uint128,int24)"));
@@ -63,15 +63,9 @@ async function calculateAndExecuteOpportunities(pairKey) {
 
         if (profitBps > requiredProfitBps) {
             const profitPercentage = (Number(profitBps) / 100).toFixed(2);
-            console.log(`
-################################################################################
-OPPORTUNITY DETECTED on ${pairKey}
---------------------------------------------------------------------------------
-Buy on: ${bestBuy.dex} (${bestBuy.type}${bestBuy.fee ? ` @ ${bestBuy.fee} fee` : ''})
-Sell on: ${bestSell.dex} (${bestSell.type}${bestSell.fee ? ` @ ${bestSell.fee} fee` : ''})
-Est. Profit: ${formatUnits(profitBps, 2)} bps (~${profitPercentage}%)
---------------------------------------------------------------------------------
-`);
+            console.log(`\n################################################################################\nOPPORTUNITY DETECTED on ${pairKey}\n--------------------------------------------------------------------------------\nBuy on: ${bestBuy.dex} (${bestBuy.type}${bestBuy.fee ? ` @ ${bestBuy.fee} fee` : ''})\nSell on: ${bestSell.dex} (${bestSell.type}${bestSell.fee ? ` @ ${bestSell.fee} fee` : ''})\nEst. Profit: ${formatUnits(profitBps, 2)} bps (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
+            console.log('>>> Pausing for 1 second to avoid rate-limiting before execution...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
             await executeArbitrage(bestBuy, bestSell, pairKey);
         } else {
             // console.log(`- ${pairKey}: Discarded (profit of ${formatUnits(profitBps, 2)} bps is too low)`);
@@ -117,50 +111,67 @@ async function handleSwap(log) {
 
 async function reconcilePools() {
     const promises = [];
+    console.log("Reconciling V2 pools...");
     for (const pairKey of Object.keys(pools)) {
         const pool = pools[pairKey];
         for (const dex of Object.keys(pool.dexes)) {
             const dexData = pool.dexes[dex];
             if (dexData.type === 'V2') {
+                console.log(`- Reconciling ${pairKey} on ${dex}`);
                 promises.push(updateV2Pool(pairKey, dex));
             } else if (dexData.type === 'V3') {
+                console.log("Reconciling V3 pools...");
                 for (const fee in dexData.fees) {
+                    console.log(`- Reconciling ${pairKey} on ${dex} (fee: ${fee})`);
                     promises.push(updateV3Pool(pairKey, dex, fee));
                 }
             }
         }
     }
-    await Promise.all(promises);
+    
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Reconciliation timeout')), BOT_CONFIG.RECONCILIATION_TIMEOUT)
+    );
+
+    try {
+        await Promise.race([Promise.all(promises), timeoutPromise]);
+        console.log("Reconciliation complete.");
+    } catch (error) {
+        console.error("Reconciliation failed or timed out:", error.message);
+    }
 }
 
 function listenToEvents() {
-    const wsProvider = getProvider(true); // WebSocket provider for real-time events
-    const provider = getProvider();     // Standard provider for block polling
+    const provider = getScanningProvider();
 
     console.log("Starting hybrid event detection...");
 
     // 1. Fast Path: Real-time event listener
-    wsProvider.on({ topics: [[SWAP_EVENT_TOPIC_V2, SWAP_EVENT_TOPIC_V3]] }, (log) => {
+    provider.on({ topics: [[SWAP_EVENT_TOPIC_V2, SWAP_EVENT_TOPIC_V3]] }, (log) => {
         if (isScanning) return; // Don't process if a full block scan is in progress
-        handleSwap(log);
+        handleSwap(log).catch(err => {
+            console.error(`[FAST PATH] Error processing swap event:`, err);
+        });
     });
 
     // 2. Reconciliation Path: Block-by-block scanner
     provider.on('block', async (blockNumber) => {
-        isScanning = true;
-        console.log(`
-================================================================================
-[RECONCILIATION] Scanning block ${blockNumber}...
-================================================================================`);
-        
-        // First, update all pools to the latest state
-        await reconcilePools();
+        try {
+            isScanning = true;
+            console.log(`\n================================================================================\n[RECONCILIATION] Scanning block ${blockNumber}...\n================================================================================`);
+            
+            // First, update all pools to the latest state
+            await reconcilePools();
 
-        // Then, analyze all pairs with the fresh data
-        for (const pairKey of Object.keys(pools)) {
-            await calculateAndExecuteOpportunities(pairKey);
+            // Then, analyze all pairs with the fresh data
+            for (const pairKey of Object.keys(pools)) {
+                await calculateAndExecuteOpportunities(pairKey);
+            }
+        } catch (err) {
+            console.error(`[RECONCILIATION] Error processing block ${blockNumber}:`, err);
+        } finally {
+            isScanning = false;
         }
-        isScanning = false;
     });
 }
 

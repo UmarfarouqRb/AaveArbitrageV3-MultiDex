@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { initializeProvider } = require('./core/provider');
+const { initializeProviders } = require('./core/provider');
 const { initializeWalletAndContract } = require('./core/wallet');
 const { initializePools } = require('./core/poolState');
 const { listenToEvents } = require('./services/opportunity');
@@ -13,7 +13,7 @@ async function run() {
     console.log('========================================');
     broadcast({ type: 'status', data: { isOnline: true, message: 'Bot Starting...' } });
 
-    await initializeProvider();
+    await initializeProviders();
     await initializeWalletAndContract();
     await initializePools();
     listenToEvents();

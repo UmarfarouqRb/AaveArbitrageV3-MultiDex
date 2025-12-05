@@ -1,39 +1,51 @@
 const { ethers } = require('ethers');
 
 const primaryProviderUrl = `wss://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-const fallbackProviderUrl = `https://base.quicknode.com/your-quicknode-api-key`; // Replace with your QuickNode key
+const executionProviderUrl = 'wss://falling-billowing-telescope.base-mainnet.quiknode.pro/743c8cd0a0e5c9d6dae8538b392e48cfd7b2cd20/';
 
-let provider;
+let scanningProvider;
+let executionProvider;
 
-async function initializeProvider() {
+async function initializeProviders() {
     try {
-        console.log("Attempting to connect to primary provider (Alchemy)...");
-        provider = new ethers.WebSocketProvider(primaryProviderUrl);
-        await provider.getNetwork();
-        console.log("Successfully connected to primary provider.");
+        console.log("Initializing providers...");
+
+        scanningProvider = new ethers.WebSocketProvider(primaryProviderUrl);
+        await scanningProvider.getNetwork();
+        console.log("Scanning provider (Alchemy) connected.");
+
+        executionProvider = new ethers.WebSocketProvider(executionProviderUrl);
+        await executionProvider.getNetwork();
+        console.log("Execution provider (QuickNode) connected.");
+
     } catch (error) {
-        console.error("Primary provider connection failed, attempting fallback...", error);
-        try {
-            provider = new ethers.WebSocketProvider(fallbackProviderUrl);
-            await provider.getNetwork();
-            console.log("Successfully connected to fallback provider (QuickNode).");
-        } catch (fallbackError) {
-            console.error("FATAL: All provider connections failed.", fallbackError);
-            process.exit(1);
-        }
+        console.error("FATAL: Could not initialize providers.", error);
+        process.exit(1);
     }
 
-    provider.on('error', (err) => {
-        console.error('Provider error, re-initializing...', err);
-        initializeProvider();
+    scanningProvider.on('error', (err) => {
+        console.error('Scanning provider error, re-initializing...', err);
+        initializeProviders();
+    });
+
+    executionProvider.on('error', (err) => {
+        console.error('Execution provider error, re-initializing...', err);
+        initializeProviders();
     });
 }
 
-function getProvider() {
-    if (!provider) {
-        throw new Error("Provider not initialized");
+function getScanningProvider() {
+    if (!scanningProvider) {
+        throw new Error("Scanning provider not initialized");
     }
-    return provider;
+    return scanningProvider;
 }
 
-module.exports = { initializeProvider, getProvider };
+function getExecutionProvider() {
+    if (!executionProvider) {
+        throw new Error("Execution provider not initialized");
+    }
+    return executionProvider;
+}
+
+module.exports = { initializeProviders, getScanningProvider, getExecutionProvider };

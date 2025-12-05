@@ -1,0 +1,25 @@
+[
+  {
+    "type": "function",
+    "stateMutability": "view",
+    "name": "getReserves",
+    "inputs": [],
+    "outputs": [
+      { "name": "reserve0", "type": "uint112" },
+      { "name": "reserve1", "type": "uint112" },
+      { "name": "blockTimestampLast", "type": "uint32" }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "Swap",
+    "inputs": [
+      { "indexed": true,  "name": "sender", "type": "address" },
+      { "indexed": false, "name": "amount0In",  "type": "uint256" },
+      { "indexed": false, "name": "amount1In",  "type": "uint256" },
+      { "indexed": false, "name": "amount0Out", "type": "uint256" },
+      { "indexed": false, "name": "amount1Out", "type": "uint256" },
+      { "indexed": true,  "name": "to", "type": "address" }
+    ]
+  }
+]
