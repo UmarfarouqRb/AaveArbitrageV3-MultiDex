@@ -94,12 +94,6 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
     }
 
     const netProfit = sub(amountOutFromSell, loanAmount);
-    const minProfit = ethers.parseUnits(BOT_CONFIG.MIN_PROFIT_THRESHOLD_ETH, TOKEN_DECIMALS.base[loanTokenSymbol]);
-
-    if (netProfit <= minProfit) {
-        console.log(`[${pairKey}] Discarded: Profit of ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} is below threshold.`);
-        return;
-    }
 
     const swapPath = [];
     const swapsV3 = [];
@@ -305,7 +299,7 @@ async function executeArbitrage(buyDex, sellDex, pairKey) {
             });
         }
     } finally {
-        console.log(`--- COOLDOWN: Pausing for ${BOT_CONFIG.RECONCILIATION_TIMEOUT / 1000} seconds before next scan. ---`);
+        console.log(`--- COOLDOWN: Pausing for ${BOT_CONFIG.RECONCILIATION_TIMEOUT / 10000} seconds before next scan. ---`);
         await new Promise(resolve => setTimeout(resolve, BOT_CONFIG.RECONCILIATION_TIMEOUT));
     }
 }
