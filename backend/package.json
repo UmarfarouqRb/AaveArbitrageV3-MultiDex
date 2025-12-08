@@ -4,7 +4,12 @@
   "description": "Backend for the arbitrage bot",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "pm2 start ecosystem.config.js --env production",
+    "dev": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop arbitrage-bot",
+    "restart": "pm2 restart arbitrage-bot",
+    "delete": "pm2 delete arbitrage-bot",
+    "logs": "pm2 logs arbitrage-bot"
   },
   "dependencies": {
     "@flashbots/ethers-provider-bundle": "^1.0.0",
@@ -12,6 +17,7 @@
     "ethers": "^6.7.1",
     "ws": "^8.18.3",
     "express": "^4.17.1",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "pm2": "^6.0.14"
   }
 }

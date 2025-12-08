@@ -4,7 +4,7 @@ const { bn, expand, div, mul, sub } = require('../utils/bigints');
 const { getPriceFromV2 } = require('../core/v2');
 const { getPriceFromV3 } = require('../core/v3');
 const { executeArbitrage } = require('./executor');
-const { BOT_CONFIG, LOAN_TOKENS, TOKEN_DECIMALS, DEX_CONFIG, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES } = require('../config');
+const { BOT_CONFIG, LOAN_TOKENS, TOKEN_DECIMALS, DEX_CONFIG, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES, TOKENS } = require('../config');
 const { getScanningProvider, getExecutionProvider } = require('../core/provider.js');
 const { getAmountOut: getV2AmountOut, getOptimalAmountIn: getOptimalV2AmountIn } = require('../core/v2.js');
 const { getAmountOut: getV3AmountOut } = require('../core/v3.js');
@@ -14,6 +14,97 @@ const SWAP_EVENT_TOPIC_V2 = keccak256(toUtf8Bytes("Sync(uint112,uint112)"));
 const SWAP_EVENT_TOPIC_V3 = keccak256(toUtf8Bytes("Swap(address,address,int256,int256,uint160,uint128,int24)"));
 
 let isScanning = false;
+
+// --- Helper Functions ---
+
+function getEthPriceInToken(loanTokenSymbol) {
+    const wethAddress = TOKENS.base.WETH;
+    const loanTokenAddress = LOAN_TOKENS[loanTokenSymbol];
+    const pairKey = `${loanTokenSymbol}-WETH`;
+    const reversedPairKey = `WETH-${loanTokenSymbol}`;
+
+    const pool = pools[pairKey] || pools[reversedPairKey];
+    if (!pool || !pool.dexes) return 0n;
+
+    let bestPrice = 0n;
+
+    for (const dex in pool.dexes) {
+        const dexData = pool.dexes[dex];
+        let price = 0n;
+        if (dexData.type === 'V2') {
+            if (!dexData.reserve0 || !dexData.reserve1) continue;
+            const reserves = (getAddress(pool.token0) === wethAddress) ? [dexData.reserve0, dexData.reserve1] : [dexData.reserve1, dexData.reserve0];
+            price = div(mul(reserves[1], expand(1n, 18)), reserves[0]);
+        } else if (dexData.type === 'V3') {
+            let feeData = null;
+            for (const fee in dexData.fees) { // Get the most liquid pool
+                const currentFeeData = dexData.fees[fee];
+                if (!currentFeeData.sqrtPriceX96 || !currentFeeData.liquidity) continue;
+                if (!feeData || currentFeeData.liquidity > feeData.liquidity) {
+                    feeData = currentFeeData;
+                }
+            }
+            if (!feeData) continue;
+            price = getPriceFromV3(feeData.sqrtPriceX96, pool.token0, pool.token1);
+            if (getAddress(pool.token0) !== wethAddress) {
+                price = div(expand(1n, 36), price);
+            }
+        }
+        if (price > bestPrice) {
+            bestPrice = price;
+        }
+    }
+    return bestPrice;
+}
+
+
+function getBestLoanAmount(price1, price2, loanTokenSymbol, intermediateTokenSymbol, loanTokenAddress, intermediateTokenAddress) {
+    // For V2 -> V2, we have a deterministic formula
+    if (price1.type === 'V2' && price2.type === 'V2') {
+        return getOptimalV2AmountIn(price1.reserve1, price1.reserve0, price2.reserve0, price2.reserve1);
+    }
+
+    // For paths involving V3, we iterate to find the best loan amount
+    let bestLoanAmount = 0n;
+    let maxProfit = -1n; // Use -1 to ensure any positive profit is chosen
+
+    // Determine a reasonable starting reserve to base our iterations on
+    const startingReserve = price1.type === 'V2' ? price1.reserve1 : (
+        price1.liquidity > 0n ? div(mul(price1.liquidity, price1.sqrtPriceX96), (1n << 96n)) : 0n
+    );
+
+    if (startingReserve === 0n) return 0n;
+
+    for (let i = 1; i <= BOT_CONFIG.V3_LOAN_AMOUNT_ITERATIONS; i++) {
+        const increment = bn(BOT_CONFIG.V3_LOAN_AMOUNT_INCREMENT_BPS * i);
+        const loanAmount = div(mul(startingReserve, increment), 10000n);
+        if (loanAmount <= 0n) continue;
+
+        try {
+            const amountOut1 = (price1.type === 'V2')
+                ? getV2AmountOut(loanAmount, price1.reserve1, price1.reserve0)
+                : getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
+
+            const finalAmountOut = (price2.type === 'V2')
+                ? getV2AmountOut(amountOut1, price2.reserve0, price2.reserve1)
+                : getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
+
+            const grossProfit = sub(finalAmountOut, loanAmount);
+
+            if (grossProfit > maxProfit) {
+                maxProfit = grossProfit;
+                bestLoanAmount = loanAmount;
+            }
+        } catch (e) {
+            continue; // Calculation failed for this amount, try next
+        }
+    }
+
+    return bestLoanAmount;
+}
+
+
+// --- Main Arbitrage Logic ---
 
 function getPrices(pairKey) {
     const pool = pools[pairKey];
@@ -43,7 +134,6 @@ function getPrices(pairKey) {
 
 async function findBestMultiHopOpportunity(loanTokenSymbol) {
     const loanTokenAddress = LOAN_TOKENS[loanTokenSymbol];
-    console.log(`\n[MULTI-HOP] Searching for ${loanTokenSymbol} arbitrage routes...`);
 
     for (const pair1Key in pools) {
         const [token0, token1] = pair1Key.split('-');
@@ -65,13 +155,7 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                 for (const price1 of prices1) {
                     for (const price2 of prices2) {
                         
-                        let loanAmount;
-                        // For now, only calculate optimal loan for V2 -> V2 paths
-                        if (price1.type === 'V2' && price2.type === 'V2') {
-                            loanAmount = getOptimalV2AmountIn(price1.reserve1, price1.reserve0, price2.reserve0, price2.reserve1);
-                        } else {
-                            loanAmount = div(mul(price1.reserve1, bn(BOT_CONFIG.LOAN_PERCENTAGE)), 100n);
-                        }
+                        const loanAmount = getBestLoanAmount(price1, price2, loanTokenSymbol, intermediateTokenSymbol, loanTokenAddress, intermediateTokenAddress);
 
                         if (loanAmount <= 0n) continue;
 
@@ -93,7 +177,7 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                         }
 
                         const grossProfit = sub(finalAmountOut, loanAmount);
-                        const aaveFee = mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE * 10000)) / 10000n;
+                        const aaveFee = div(mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE_BPS)), 10000n);
                         let netProfit = sub(grossProfit, aaveFee);
 
                         if (netProfit <= 0n) continue;
@@ -124,6 +208,7 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                             swapsV3.push({ router: DEX_CONFIG.base[price2.dex].router, pool: pools[pair2Key].dexes[price2.dex].fees[price2.fee].address, tokenIn: intermediateTokenAddress, tokenOut: loanTokenAddress, amountOutMin: 0, dexType: V3_DEX_TYPES[price2.dex] });
                         }
                         
+                        let txCostInLoanToken = 0n;
                         try {
                             const arbitrageContract = getArbitrageContract();
                             const provider = getExecutionProvider();
@@ -134,11 +219,13 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                             const estimatedGas = await arbitrageContract.executeArbitrage.estimateGas(loanTokenAddress, loanAmount, swapPath, swapsV3, swapsV2);
                             const gasLimit = div(mul(estimatedGas, 120n), 100n);
                             const txCost = mul(gasPrice, gasLimit);
+                            
+                            const ethPriceInLoanToken = getEthPriceInToken(loanTokenSymbol);
+                            if (ethPriceInLoanToken <= 0n) continue;
 
-                            const ethPriceInLoanToken = 3000n * expand(1n, TOKEN_DECIMALS.base[loanTokenSymbol]); // Placeholder
-                            const txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
-
+                            txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
                             netProfit = sub(netProfit, txCostInLoanToken);
+
                         } catch(e) {
                             continue;
                         }
@@ -149,10 +236,24 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                         if (profitBps >= bn(BOT_CONFIG.MIN_PROFIT_BPS)) {
                             const profitPercentage = (Number(profitBps) / 100).toFixed(2);
                             const opportunityPath = `${loanTokenSymbol} -> ${intermediateTokenSymbol} -> ${loanTokenSymbol} via ${price1.dex} & ${price2.dex}`;
-                            
-                            console.log(`\n################################################################################\nMULTI-HOP OPPORTUNITY DETECTED\n--------------------------------------------------------------------------------\nPath: ${opportunityPath}\nEst. Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
-                            
-                            await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]) });
+                            const decimals = TOKEN_DECIMALS.base[loanTokenSymbol];
+
+                            console.log(`
+################################################################################
+MULTI-HOP OPPORTUNITY DETECTED
+--------------------------------------------------------------------------------
+  Path:           ${opportunityPath}
+  Loan Amount:    ${formatUnits(loanAmount, decimals)} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+  Gross Profit:   ${formatUnits(grossProfit, decimals)} ${loanTokenSymbol}
+  Aave Fee:       ${formatUnits(aaveFee, decimals)} ${loanTokenSymbol}
+  Gas Cost:       ${formatUnits(txCostInLoanToken, decimals)} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+  Net Profit:     ${formatUnits(netProfit, decimals)} ${loanTokenSymbol} (~${profitPercentage}%)
+################################################################################
+`);
+
+                            await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, decimals) });
                         }
                     }
                 }
@@ -174,20 +275,9 @@ async function calculateAndExecuteOpportunities(pairKey) {
     const loanToken = pool.token1;
     const tradeToken = pool.token0;
     const loanTokenSymbol = pool.token1Symbol;
+    const tradeTokenSymbol = pool.token0Symbol;
 
-    let loanAmount;
-    if (bestBuy.type === 'V2' && bestSell.type === 'V2') {
-        loanAmount = getOptimalV2AmountIn(bestBuy.reserve1, bestBuy.reserve0, bestSell.reserve0, bestSell.reserve1);
-    } else {
-        const loanPercentage = bn(BOT_CONFIG.LOAN_PERCENTAGE);
-        if (bestBuy.type === 'V2') {
-            loanAmount = div(mul(bestBuy.reserve1, loanPercentage), 100n);
-        } else { // V3
-            const Q96 = (1n << 96n);
-            const reserve1_v3 = div(mul(bestBuy.liquidity, bestBuy.sqrtPriceX96), Q96);
-            loanAmount = div(mul(reserve1_v3, loanPercentage), 100n);
-        }
-    }
+    const loanAmount = getBestLoanAmount(bestBuy, bestSell, loanTokenSymbol, tradeTokenSymbol, loanToken, tradeToken);
 
     if (loanAmount <= 0n) return;
 
@@ -209,7 +299,7 @@ async function calculateAndExecuteOpportunities(pairKey) {
     }
 
     const grossProfit = sub(amountOutFromSell, loanAmount);
-    const aaveFee = mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE * 10000)) / 10000n;
+    const aaveFee = div(mul(loanAmount, bn(BOT_CONFIG.AAVE_FLASH_LOAN_FEE_BPS)), 10000n);
     let netProfit = sub(grossProfit, aaveFee);
 
     if (netProfit <= 0n) return;
@@ -238,6 +328,7 @@ async function calculateAndExecuteOpportunities(pairKey) {
         swapsV3.push({ router: DEX_CONFIG.base[bestSell.dex].router, pool: pools[pairKey].dexes[bestSell.dex].fees[bestSell.fee].address, tokenIn: tradeToken, tokenOut: loanToken, amountOutMin: 0, dexType: V3_DEX_TYPES[bestSell.dex] });
     }
 
+    let txCostInLoanToken = 0n;
     try {
         const arbitrageContract = getArbitrageContract();
         const provider = getExecutionProvider();
@@ -250,9 +341,10 @@ async function calculateAndExecuteOpportunities(pairKey) {
         const gasLimit = div(mul(estimatedGas, 120n), 100n);
         const txCost = mul(gasPrice, gasLimit);
         
-        const ethPriceInLoanToken = 3000n * expand(1n, TOKEN_DECIMALS.base[loanTokenSymbol]); // Placeholder
-        const txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
-        
+        const ethPriceInLoanToken = getEthPriceInToken(loanTokenSymbol);
+        if (ethPriceInLoanToken <= 0n) return;
+
+        txCostInLoanToken = div(mul(txCost, ethPriceInLoanToken), expand(1n, 18));
         netProfit = sub(netProfit, txCostInLoanToken);
 
     } catch (e) {
@@ -266,10 +358,24 @@ async function calculateAndExecuteOpportunities(pairKey) {
     if (profitBps >= bn(BOT_CONFIG.MIN_PROFIT_BPS)) {
         const profitPercentage = (Number(profitBps) / 100).toFixed(2);
         const opportunityPath = `${bestBuy.dex} -> ${bestSell.dex}`;
+        const decimals = TOKEN_DECIMALS.base[loanTokenSymbol];
 
-        console.log(`\n################################################################################\nOPPORTUNITY DETECTED on ${pairKey}\n--------------------------------------------------------------------------------\nPath: ${opportunityPath}\nEst. Profit: ${formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol])} ${loanTokenSymbol} (~${profitPercentage}%)\n--------------------------------------------------------------------------------\n`);
+        console.log(`
+################################################################################
+OPPORTUNITY DETECTED on ${pairKey}
+--------------------------------------------------------------------------------
+  Path:           ${opportunityPath}
+  Loan Amount:    ${formatUnits(loanAmount, decimals)} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+  Gross Profit:   ${formatUnits(grossProfit, decimals)} ${loanTokenSymbol}
+  Aave Fee:       ${formatUnits(aaveFee, decimals)} ${loanTokenSymbol}
+  Gas Cost:       ${formatUnits(txCostInLoanToken, decimals)} ${loanTokenSymbol}
+--------------------------------------------------------------------------------
+  Net Profit:     ${formatUnits(netProfit, decimals)} ${loanTokenSymbol} (~${profitPercentage}%)
+################################################################################
+`);
 
-        await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, TOKEN_DECIMALS.base[loanTokenSymbol]) });
+        await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, decimals) });
     }
 }
 
@@ -301,13 +407,13 @@ async function handleSwap(log) {
         if (updated) {
             await calculateAndExecuteOpportunities(pairKey);
             break;
-        }
+        } 
     }
 }
 
 async function reconcilePools() {
     const promises = [];
-    console.log("\nReconciling all pools (V2 & V3)...");
+    console.log("[RECONCILIATION] Reconciling all pools (V2 & V3)...");
     for (const pairKey of Object.keys(pools)) {
         const pool = pools[pairKey];
         for (const dex of Object.keys(pool.dexes)) {
@@ -328,9 +434,9 @@ async function reconcilePools() {
 
     try {
         await Promise.race([Promise.all(promises), timeoutPromise]);
-        console.log("Reconciliation complete.");
+        console.log("[RECONCILIATION] Reconciliation complete.");
     } catch (error) {
-        console.error("Reconciliation failed or timed out:", error.message);
+        console.error("[RECONCILIATION] Reconciliation failed or timed out:", error.message);
     }
 }
 
@@ -347,24 +453,36 @@ function listenToEvents() {
     });
 
     provider.on('block', async (blockNumber) => {
+        const startTime = Date.now();
         try {
             isScanning = true;
-            console.log(`\n================================================================================\n[RECONCILIATION] Scanning block ${blockNumber}...\n================================================================================`);
+            console.log(`
+================================================================================
+[RECONCILIATION] Scanning block ${blockNumber}...
+================================================================================`);
             
             await reconcilePools();
 
+            console.log('\n[RECONCILIATION] Checking for single-pair opportunities...');
             for (const pairKey of Object.keys(pools)) {
                 await calculateAndExecuteOpportunities(pairKey);
             }
+            console.log('[RECONCILIATION] Finished checking for single-pair opportunities.');
 
+            console.log('\n[RECONCILIATION] Checking for multi-hop opportunities...');
             for (const loanTokenSymbol of Object.keys(LOAN_TOKENS)) {
                 await findBestMultiHopOpportunity(loanTokenSymbol);
             }
+            console.log('[RECONCILIATION] Finished checking for multi-hop opportunities.');
 
         } catch (err) {
             console.error(`[RECONCILIATION] Error processing block ${blockNumber}:`, err);
         } finally {
             isScanning = false;
+            const endTime = Date.now();
+            console.log(`
+[RECONCILIATION] Finished processing block ${blockNumber}. Time taken: ${endTime - startTime}ms`);
+            console.log(`================================================================================`);
         }
     });
 }

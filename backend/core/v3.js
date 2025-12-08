@@ -1,57 +1,68 @@
 const { div, mul } = require('../utils/bigints');
 
-// Price of token0 in terms of token1
+const Q96 = 2n ** 96n;
+
+// Returns the price of token0 in terms of token1
 function getPriceFromV3(sqrtPriceX96) {
     const Q192 = 2n ** 192n;
     const ONE_E18 = 10n ** 18n;
     return div(mul(sqrtPriceX96 ** 2n, ONE_E18), Q192);
 }
 
-/**
- * Calculates the output amount of a swap on a Uniswap V3-like pool.
- * This is a simplified implementation and assumes the swap does not cross a tick boundary.
- * @param {bigint} amountIn The amount of tokens being swapped in.
- * @param {bigint} sqrtPriceX96 The current sqrt price of the pool.
- * @param {bigint} liquidity The current liquidity of the pool.
- * @param {string} tokenIn The address of the input token.
- * @param {string} tokenOut The address of the output token.
- * @returns {bigint} The calculated amount of tokens received.
- */
-function getAmountOut(amountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut) {
-    const Q96 = 2n ** 96n;
-    const FEE = 3000n; // Using a hardcoded 0.3% fee
+function getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, roundUp) {
+    if (sqrtRatioAX96 > sqrtRatioBX96) {
+        [sqrtRatioAX96, sqrtRatioBX96] = [sqrtRatioBX96, sqrtRatioAX96];
+    }
+    const numerator1 = liquidity * Q96;
+    const numerator2 = sqrtRatioBX96 - sqrtRatioAX96;
 
-    if (liquidity === 0n) {
+    if (roundUp) {
+        return (numerator1 * numerator2 + (sqrtRatioBX96 * sqrtRatioAX96) - 1n) / (sqrtRatioBX96 * sqrtRatioAX96);
+    } else {
+        return (numerator1 * numerator2) / (sqrtRatioBX96 * sqrtRatioAX96);
+    }
+}
+
+function getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, liquidity, roundUp) {
+    if (sqrtRatioAX96 > sqrtRatioBX96) {
+        [sqrtRatioAX96, sqrtRatioBX96] = [sqrtRatioBX96, sqrtRatioAX96];
+    }
+    if (roundUp) {
+        return (liquidity * (sqrtRatioBX96 - sqrtRatioAX96) + Q96 - 1n) / Q96;
+    } else {
+        return liquidity * (sqrtRatioBX96 - sqrtRatioAX96) / Q96;
+    }
+}
+
+function getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, amountIn, zeroForOne) {
+    if (liquidity === 0n) return sqrtPriceX96;
+    const product = amountIn * sqrtPriceX96;
+    
+    if (zeroForOne) {
+        const denominator = (liquidity * Q96) + product;
+        if (denominator === 0n) return sqrtPriceX96;
+        return (liquidity * Q96 * sqrtPriceX96) / denominator;
+    } else {
+        const numerator = (liquidity * Q96 * sqrtPriceX96) + (amountIn * Q96 * Q96);
+        const denominator = (liquidity * Q96) + (amountIn * sqrtPriceX96);
+        if(denominator === 0n) return sqrtPriceX96;
+        return numerator / denominator;
+    }
+}
+
+function getAmountOut(amountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut) {
+    const zeroForOne = tokenIn.toLowerCase() < tokenOut.toLowerCase();
+    
+    try {
+        const sqrtPriceNextX96 = getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, amountIn, zeroForOne);
+        if (zeroForOne) {
+            return getAmount1Delta(sqrtPriceNextX96, sqrtPriceX96, liquidity, false);
+        } else {
+            return getAmount0Delta(sqrtPriceX96, sqrtPriceNextX96, liquidity, false);
+        }
+    } catch (e) {
         return 0n;
     }
-
-    const zeroForOne = tokenIn.toLowerCase() < tokenOut.toLowerCase();
-    const amountInWithFee = mul(amountIn, 1000000n - FEE) / 1000000n;
-
-    let amountOut;
-
-    if (zeroForOne) {
-        // Swapping token0 for token1 (e.g., WETH for USDC)
-        // amountIn is token0, amountOut is token1
-        const product = amountInWithFee * sqrtPriceX96;
-        const denominator = (liquidity << 96n) + product;
-        if (denominator === 0n) return 0n;
-        const nextSqrtPriceX96 = ((liquidity << 96n) * sqrtPriceX96) / denominator;
-
-        const amountOutNum = liquidity * (sqrtPriceX96 - nextSqrtPriceX96);
-        amountOut = amountOutNum / Q96;
-    } else {
-        // Swapping token1 for token0 (e.g., USDC for WETH)
-        // amountIn is token1, amountOut is token0
-        const nextSqrtPriceX96 = sqrtPriceX96 + (amountInWithFee << 96n) / liquidity;
-
-        const numerator = liquidity * (nextSqrtPriceX96 - sqrtPriceX96) * Q96;
-        const denominator = nextSqrtPriceX96 * sqrtPriceX96;
-        if (denominator === 0n) return 0n;
-        amountOut = numerator / denominator;
-    }
-
-    return amountOut > 0n ? amountOut : 0n;
 }
 
 module.exports = { getPriceFromV3, getAmountOut };

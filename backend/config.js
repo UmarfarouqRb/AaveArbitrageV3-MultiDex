@@ -84,12 +84,12 @@ const DEX_CONFIG = {
         },
         'UniswapV2': {
             type: 'V2',
-            router: '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+            router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
             factory: '0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6',
         },
         'SushiswapV2': {
             type: 'V2',
-            router: '0x6BDED42c6DA8FBf0d2ba55B2fa120C5e0c8D7891',
+            router: '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',
             factory: '0x71524B4f93c58fcbF659783284E38825f0622859',
         }
     }
@@ -138,10 +138,12 @@ const BOT_CONFIG = {
     MIN_PROFIT_BPS: 0, // Set to 0 for more trades
     GAS_PRICE_STRATEGY: 'fast',
     GAS_LIMIT: '1000000',
-    AAVE_FLASH_LOAN_FEE: 0.0009, // 0.09%
+    AAVE_FLASH_LOAN_FEE_BPS: 9, // 9 BPS = 0.09%
     ESTIMATED_GAS_COST_ETH: '0', // Estimated gas cost in ETH
     LOAN_PERCENTAGE: 5, // 5% of the pool's reserve
     RECONCILIATION_TIMEOUT: 30000, // 30 seconds
+    V3_LOAN_AMOUNT_ITERATIONS: 10,
+    V3_LOAN_AMOUNT_INCREMENT_BPS: 500, // 5%
 };
 
 module.exports = {

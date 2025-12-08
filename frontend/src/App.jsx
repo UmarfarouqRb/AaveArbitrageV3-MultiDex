@@ -6,11 +6,9 @@ import { usePrivy } from '@privy-io/react-auth';
 import ErrorBoundary from './components/ErrorBoundary';
 import { WalletProvider } from './contexts/WalletContext';
 import { NetworkProvider } from './contexts/NetworkContext';
-import TopNav from './components/TopNav';
 
-// Lazy load the pages
+// Lazy load the page
 const ArbitrageBotPage = lazy(() => import('./pages/ArbitrageBotPage'));
-const HistoryPage = lazy(() => import('./pages/HistoryPage'));
 
 const App = () => {
   const { login, logout, ready, authenticated } = usePrivy();
@@ -37,7 +35,6 @@ const App = () => {
             
             {/* Navigation and main content area */}
             <div className="container mx-auto px-4 md:px-6 mt-6">
-              <TopNav />
               <main className="mt-6">
                 <Suspense fallback={<div className="bg-card-background border border-border-color rounded-lg p-8 text-center text-text-secondary"><h2>Loading...</h2></div>}>
                   <Routes>
@@ -50,11 +47,6 @@ const App = () => {
                       <ErrorBoundary>
                         {ready && authenticated ? <ArbitrageBotPage /> : <LoginPagePrompt />}
                       </ErrorBoundary>
-                    } />
-                    <Route path="/history" element={
-                        <ErrorBoundary>
-                            {ready && authenticated ? <HistoryPage /> : <LoginPagePrompt />}
-                        </ErrorBoundary>
                     } />
                   </Routes>
                 </Suspense>
