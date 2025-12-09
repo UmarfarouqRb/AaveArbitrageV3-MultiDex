@@ -1,19 +1,15 @@
-const { ethers, getAddress, keccak256, toUtf8Bytes, formatUnits, AbiCoder } = require('ethers');
-const { pools, updateV2Pool, updateV3Pool, reconcilePools } = require('../core/poolState');
+const { getAddress, keccak256, toUtf8Bytes, formatUnits, AbiCoder } = require('ethers');
+const { pools, updateV2Pool, updateV3Pool } = require('../core/poolState');
 const { bn, expand, div, mul, sub } = require('../utils/bigints');
 const { getPriceFromV2 } = require('../core/v2');
 const { getPriceFromV3 } = require('../core/v3');
 const { executeArbitrage } = require('./executor');
 const { BOT_CONFIG, LOAN_TOKENS, TOKEN_DECIMALS, DEX_CONFIG, SWAP_STEP_TYPES, V2_DEX_TYPES, V3_DEX_TYPES, TOKENS } = require('../config');
-const { getScanningProvider, getExecutionProvider } = require('../core/provider.js');
+const { getExecutionProvider } = require('../core/provider.js');
 const { getAmountOut: getV2AmountOut, getOptimalAmountIn: getOptimalV2AmountIn } = require('../core/v2.js');
 const { getAmountOut: getV3AmountOut } = require('../core/v3.js');
 const { getArbitrageContract } = require('../core/wallet.js');
 
-const SWAP_EVENT_TOPIC_V2 = keccak256(toUtf8Bytes("Sync(uint112,uint112)"));
-const SWAP_EVENT_TOPIC_V3 = keccak256(toUtf8Bytes("Swap(address,address,int256,int256,uint160,uint128,int24)"));
-
-let isScanning = false;
 let isTrading = false;
 
 // --- Helper Functions ---
@@ -400,82 +396,4 @@ OPPORTUNITY DETECTED on ${pairKey}
     }
 }
 
-async function handleSwap(log) {
-    if (isTrading) return;
-    const poolAddress = getAddress(log.address);
-
-    for (const pairKey of Object.keys(pools)) {
-        const pool = pools[pairKey];
-        let updated = false;
-
-        for (const dex of Object.keys(pool.dexes)) {
-            const dexData = pool.dexes[dex];
-            if (dexData.type === 'V2' && getAddress(dexData.address) === poolAddress) {
-                updateV2Pool(pairKey, dex, log);
-                updated = true;
-                break; // Found the V2 pool, no need to check other DEXs for this pair
-            } else if (dexData.type === 'V3') {
-                for (const fee in dexData.fees) {
-                    if (getAddress(dexData.fees[fee].address) === poolAddress) {
-                        updateV3Pool(pairKey, dex, fee, log);
-                        updated = true;
-                        break; // Found the V3 fee tier, no need to check other fees for this DEX
-                    }
-                }
-            }
-            if (updated) break; // Found the DEX, no need to check other DEXs for this pair
-        }
-
-        if (updated) {
-            await calculateAndExecuteOpportunities(pairKey);
-            break; // Found the pair, no need to check other pairs
-        } 
-    }
-}
-
-function listenToEvents() {
-    const provider = getScanningProvider();
-
-    console.log("Starting hybrid event detection...");
-
-    provider.on({ topics: [[SWAP_EVENT_TOPIC_V2, SWAP_EVENT_TOPIC_V3]] }, (log) => {
-        if (isScanning || isTrading) return;
-        handleSwap(log).catch(err => {
-            console.error(`[FAST PATH] Error processing swap event:`, err);
-        });
-    });
-
-    provider.on('block', async (blockNumber) => {
-        if (isTrading) return;
-        const startTime = Date.now();
-        try {
-            isScanning = true;
-            console.log(`
-================================================================================
-[RECONCILIATION] Scanning block ${blockNumber}...
-================================================================================`);
-            
-            await reconcilePools();
-
-            console.log('\n[RECONCILIATION] Checking for single-pair opportunities...');
-            await findAndExecuteOpportunity(null, false);
-
-            console.log('\n[RECONCILIATION] Checking for multi-hop opportunities...');
-            for (const loanTokenSymbol of Object.keys(LOAN_TOKENS)) {
-                await findAndExecuteOpportunity(loanTokenSymbol, true);
-            }
-            console.log('[RECONCILIATION] Finished checking for multi-hop opportunities.');
-
-        } catch (err) {
-            console.error(`[RECONCILIATION] Error processing block ${blockNumber}:`, err);
-        } finally {
-            isScanning = false;
-            const endTime = Date.now();
-            console.log(`
-[RECONCILIATION] Finished processing block ${blockNumber}. Time taken: ${endTime - startTime}ms`);
-            console.log(`================================================================================`);
-        }
-    });
-}
-
-module.exports = { listenToEvents };
+module.exports = { findAndExecuteOpportunity, calculateAndExecuteOpportunities };

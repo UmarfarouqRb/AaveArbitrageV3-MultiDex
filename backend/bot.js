@@ -2,8 +2,8 @@ require('dotenv').config();
 const { initializeProviders } = require('./core/provider');
 const { initializeWalletAndContract } = require('./core/wallet');
 const { initializePools } = require('./core/poolState');
-const { listenToEvents } = require('./services/opportunity');
-const { broadcast } = require('./core/listeners');
+const { startLoops } = require('./core/loops');
+const { listenToSwaps, broadcast } = require('./core/listeners');
 
 BigInt.prototype.toJSON = function() { return this.toString(); };
 
@@ -16,7 +16,9 @@ async function run() {
     await initializeProviders();
     await initializeWalletAndContract();
     await initializePools();
-    listenToEvents();
+    
+    listenToSwaps();
+    startLoops();
 
     console.log('========================================');
     console.log('      Bot is now running!           ');

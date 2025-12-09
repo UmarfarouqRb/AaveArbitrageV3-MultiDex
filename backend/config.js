@@ -88,11 +88,13 @@ const DEX_CONFIG = {
             type: 'V2',
             router: '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24',
             factory: '0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6',
+            stable: false, // Default to volatile
         },
         'SushiswapV2': {
             type: 'V2',
             router: '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',
             factory: '0x71524B4f93c58fcbF659783284E38825f0622859',
+            stable: false, // Default to volatile
         }
     }
 };
@@ -147,6 +149,8 @@ const BOT_CONFIG = {
     POST_TRADE_COOLDOWN: 35000, // 35 seconds
     V3_LOAN_AMOUNT_ITERATIONS: 10,
     V3_LOAN_AMOUNT_INCREMENT_BPS: 500, // 5%
+    FAST_LOOP_INTERVAL: 2000, // 2 seconds
+    SLOW_LOOP_INTERVAL: 600000, // 10 minutes
 };
 
 module.exports = {
