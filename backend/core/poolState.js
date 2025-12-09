@@ -1,4 +1,4 @@
-const { ethers, getAddress, AbiCoder } = require('ethers');
+const { ethers, getAddress, AbiCoder, Interface } = require('ethers');
 const { ARBITRAGE_PAIRS, TOKENS, TOKEN_DECIMALS, DEX_CONFIG } = require('../config');
 const { bn } = require('../utils/bigints');
 const IUniswapV3Pool_ABI = require('../abis/uniswapV3/pool.json');
@@ -9,25 +9,32 @@ const ISushiV2Factory_ABI = require('../abis/sushiV2/factory.json');
 const ISushiV2Pair_ABI = require('../abis/sushiV2/pair.json');
 const IAerodromeFactory_ABI = require('../abis/aerodrome/factory.json');
 const IAerodromePair_ABI = require('../abis/aerodrome/pair.json');
-const { getScanningProvider } = require('./provider.js');
+const { getScanningProvider, getMulticallContract } = require('./provider.js');
 
 const pools = {};
 
 async function initializePools() {
-    console.log("Initializing pools...");
+    console.log("Initializing pools for USDC and WETH pairs...");
     const provider = getScanningProvider();
 
-    const allTokens = Object.values(TOKENS.base);
-    const allPairs = [];
-    for (let i = 0; i < allTokens.length; i++) {
-        for (let j = i + 1; j < allTokens.length; j++) {
-            allPairs.push([allTokens[i], allTokens[j]]);
+    const uniquePairs = new Map();
+    // ARBITRAGE_PAIRS is defined as loan tokens vs all other tokens.
+    // This creates duplicates like [WETH, USDC] and [USDC, WETH]. We need to dedupe.
+    for (const pair of ARBITRAGE_PAIRS) {
+        // Sort by address to create a canonical representation of the pair
+        const sortedPair = pair.sort((a, b) => getAddress(a).localeCompare(getAddress(b)));
+        const pairKey = sortedPair.map(getAddress).join('-');
+        if (!uniquePairs.has(pairKey)) {
+            uniquePairs.set(pairKey, sortedPair);
         }
     }
 
-    for (const pair of allPairs) {
+    const pairsToProcess = Array.from(uniquePairs.values());
+
+    for (const pair of pairsToProcess) {
         let [tokenA_address, tokenB_address] = pair;
 
+        // This sorting is now redundant due to the canonical representation above, but harmless to keep
         if (getAddress(tokenA_address) > getAddress(tokenB_address)) {
             [tokenA_address, tokenB_address] = [tokenB_address, tokenA_address];
         }
@@ -76,8 +83,6 @@ async function initializePools() {
                             const code = await provider.getCode(pairAddress);
                             if (code !== '0x') {
                                 pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: isStable };
-                                await updateV2Pool(pairKey, dex);
-                                console.log(`Initialized V2 pool for ${pairKey} on ${dex} (stable: ${isStable})`);
                             }
                         }
                     } catch (e) { /* Ignore */ }
@@ -88,8 +93,6 @@ async function initializePools() {
                             const code = await provider.getCode(pairAddress);
                             if (code !== '0x') {
                                 pools[pairKey].dexes[dex] = { type: 'V2', address: pairAddress, stable: false };
-                                await updateV2Pool(pairKey, dex);
-                                console.log(`Initialized V2 pool for ${pairKey} on ${dex}`);
                             }
                         }
                     } catch (e) { /* Ignore */ }
@@ -103,19 +106,20 @@ async function initializePools() {
                         if (poolAddress && getAddress(poolAddress) !== ethers.ZeroAddress) {
                             const code = await provider.getCode(poolAddress);
                             if (code === '0x') continue;
-                            pools[pairKey].dexes[dex].fees[fee] = { address: poolAddress };
-                            await updateV3Pool(pairKey, dex, fee);
-                            console.log(`Initialized V3 pool for ${pairKey} on ${dex} with fee ${fee}`);
+                            const poolContract = new ethers.Contract(poolAddress, IUniswapV3Pool_ABI, provider);
+                            const tickSpacing = await poolContract.tickSpacing();
+                            pools[pairKey].dexes[dex].fees[fee] = { address: poolAddress, tickSpacing: Number(tickSpacing) };
                         }
                     } catch (e) { /* Ignore */ }
                 }
             }
         }
     }
+    await reconcilePools();
+    console.log("Pools initialized and initial state reconciled.");
 }
 
 async function updateV2Pool(pairKey, dex, log = null) {
-    const provider = getScanningProvider();
     const poolData = pools[pairKey]?.dexes[dex];
     if (!poolData || poolData.type !== 'V2') return;
 
@@ -123,30 +127,10 @@ async function updateV2Pool(pairKey, dex, log = null) {
         const [reserve0, reserve1] = new AbiCoder().decode(['uint112', 'uint112'], log.data);
         poolData.reserve0 = bn(reserve0);
         poolData.reserve1 = bn(reserve1);
-    } else {
-        try {
-            let pairAbi;
-            if (dex === 'AerodromeV2') {
-                pairAbi = IAerodromePair_ABI;
-            } else if (dex === 'SushiswapV2') {
-                pairAbi = ISushiV2Pair_ABI;
-            } else {
-                pairAbi = IUniswapV2Pair_ABI;
-            }
-            const pairContract = new ethers.Contract(poolData.address, pairAbi, provider);
-            const reserves = await pairContract.getReserves();
-            if (reserves && reserves.length >= 2) {
-                poolData.reserve0 = bn(reserves[0]);
-                poolData.reserve1 = bn(reserves[1]);
-            }
-        } catch (e) {
-            console.error(`Error updating V2 pool ${dex} for ${pairKey}:`, e.message);
-        }
-    }
+    } 
 }
 
 async function updateV3Pool(pairKey, dex, fee, log = null) {
-    const provider = getScanningProvider();
     const feeData = pools[pairKey]?.dexes[dex]?.fees[fee];
     if (!feeData) return;
 
@@ -154,29 +138,78 @@ async function updateV3Pool(pairKey, dex, fee, log = null) {
         const [, , sqrtPriceX96, liquidity] = new AbiCoder().decode(['int256', 'int256', 'uint160', 'uint128', 'int24'], log.data);
         feeData.sqrtPriceX96 = bn(sqrtPriceX96);
         feeData.liquidity = bn(liquidity);
-    } else {
-        try {
-            let poolAbi;
-            if (dex === 'PancakeV3') {
-                poolAbi = IPancakeV3Pool_ABI;
-            } else { // Default to Uniswap V3 ABI
-                poolAbi = IUniswapV3Pool_ABI;
+    }
+}
+
+async function reconcilePools() {
+    const multicall = getMulticallContract();
+    const calls = [];
+
+    const v2PairInterface = new Interface(IUniswapV2Pair_ABI);
+    const v3PoolInterface = new Interface(IUniswapV3Pool_ABI);
+
+    for (const pairKey of Object.keys(pools)) {
+        const pool = pools[pairKey];
+        for (const dex in pool.dexes) {
+            const dexData = pool.dexes[dex];
+            if (dexData.type === 'V2') {
+                calls.push({
+                    target: dexData.address,
+                    allowFailure: true,
+                    callData: v2PairInterface.encodeFunctionData('getReserves'),
+                });
+            } else if (dexData.type === 'V3') {
+                for (const fee in dexData.fees) {
+                    const feeData = dexData.fees[fee];
+                    calls.push({
+                        target: feeData.address,
+                        allowFailure: true,
+                        callData: v3PoolInterface.encodeFunctionData('slot0'),
+                    });
+                    calls.push({
+                        target: feeData.address,
+                        allowFailure: true,
+                        callData: v3PoolInterface.encodeFunctionData('liquidity'),
+                    });
+                }
             }
-            const poolContract = new ethers.Contract(feeData.address, poolAbi, provider);
-            const [slot0, liquidity] = await Promise.all([
-                poolContract.slot0(),
-                poolContract.liquidity()
-            ]);
-            if (slot0 && slot0.sqrtPriceX96 > 0n) {
-                feeData.sqrtPriceX96 = bn(slot0.sqrtPriceX96);
+        }
+    }
+
+    if (calls.length === 0) return;
+
+    const results = await multicall.aggregate3(calls);
+
+    let callIndex = 0;
+    for (const pairKey of Object.keys(pools)) {
+        const pool = pools[pairKey];
+        for (const dex in pool.dexes) {
+            const dexData = pool.dexes[dex];
+            if (dexData.type === 'V2') {
+                const result = results[callIndex++];
+                if (result.success && result.returnData !== '0x') {
+                    const [reserve0, reserve1] = v2PairInterface.decodeFunctionResult('getReserves', result.returnData);
+                    dexData.reserve0 = bn(reserve0);
+                    dexData.reserve1 = bn(reserve1);
+                }
+            } else if (dexData.type === 'V3') {
+                for (const fee in dexData.fees) {
+                    const feeData = dexData.fees[fee];
+                    const slot0Result = results[callIndex++];
+                    const liquidityResult = results[callIndex++];
+
+                    if (slot0Result.success && slot0Result.returnData !== '0x') {
+                        const [sqrtPriceX96] = v3PoolInterface.decodeFunctionResult('slot0', slot0Result.returnData);
+                        feeData.sqrtPriceX96 = bn(sqrtPriceX96);
+                    }
+                    if (liquidityResult.success && liquidityResult.returnData !== '0x') {
+                        const [liquidity] = v3PoolInterface.decodeFunctionResult('liquidity', liquidityResult.returnData);
+                        feeData.liquidity = bn(liquidity);
+                    }
+                }
             }
-            if (liquidity && liquidity > 0n) {
-                feeData.liquidity = bn(liquidity);
-            }
-        } catch (e) {
-            console.error(`Error updating V3 pool ${dex} (fee: ${fee}) for ${pairKey}:`, e.message);
         }
     }
 }
 
-module.exports = { pools, initializePools, updateV2Pool, updateV3Pool };
+module.exports = { pools, initializePools, updateV2Pool, updateV3Pool, reconcilePools };

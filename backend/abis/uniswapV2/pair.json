@@ -1,14 +1,24 @@
 [
-  {
-    "type": "function",
-    "stateMutability": "view",
-    "name": "getPair",
-    "inputs": [
-      { "name": "tokenA", "type": "address" },
-      { "name": "tokenB", "type": "address" }
-    ],
-    "outputs": [
-      { "name": "pair", "type": "address" }
-    ]
-  }
+    {
+        "constant": true,
+        "inputs": [],
+        "name": "getReserves",
+        "outputs": [
+            { "internalType": "uint112", "name": "_reserve0", "type": "uint112" },
+            { "internalType": "uint112", "name": "_reserve1", "type": "uint112" },
+            { "internalType": "uint32", "name": "_blockTimestampLast", "type": "uint32" }
+        ],
+        "payable": false,
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            { "indexed": false, "internalType": "uint112", "name": "reserve0", "type": "uint112" },
+            { "indexed": false, "internalType": "uint112", "name": "reserve1", "type": "uint112" }
+        ],
+        "name": "Sync",
+        "type": "event"
+    }
 ]

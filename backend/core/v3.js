@@ -1,4 +1,5 @@
 const { div, mul } = require('../utils/bigints');
+const { getTickAtSqrtRatio, MIN_TICK, MAX_TICK } = require('./tick');
 
 const Q96 = 2n ** 96n;
 
@@ -50,7 +51,46 @@ function getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, amountIn, zeroForOne
     }
 }
 
-function getAmountOut(amountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut) {
+function getAmountOut(amountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut, tickSpacing) {
+    const zeroForOne = tokenIn.toLowerCase() < tokenOut.toLowerCase();
+    let amountOut = 0n;
+    let remainingAmountIn = amountIn;
+
+    while (remainingAmountIn > 0n) {
+        const currentTick = getTickAtSqrtRatio(sqrtPriceX96);
+        
+        const nextTick = zeroForOne ? currentTick - tickSpacing : currentTick + tickSpacing;
+        if (nextTick < MIN_TICK || nextTick > MAX_TICK) {
+            break; 
+        }
+
+        const sqrtPriceNextX96 = getNextSqrtPriceFromInput(sqrtPriceX96, liquidity, remainingAmountIn, zeroForOne);
+
+        let amountInToNextTick, amountOutFromNextTick;
+
+        if (zeroForOne) {
+            amountInToNextTick = getAmount0Delta(sqrtPriceNextX96, sqrtPriceX96, liquidity, true);
+            amountOutFromNextTick = getAmount1Delta(sqrtPriceNextX96, sqrtPriceX96, liquidity, false);
+        } else {
+            amountInToNextTick = getAmount1Delta(sqrtPriceX96, sqrtPriceNextX96, liquidity, true);
+            amountOutFromNextTick = getAmount0Delta(sqrtPriceX96, sqrtPriceNextX96, liquidity, false);
+        }
+
+        if (remainingAmountIn >= amountInToNextTick) {
+            amountOut += amountOutFromNextTick;
+            remainingAmountIn -= amountInToNextTick;
+            sqrtPriceX96 = sqrtPriceNextX96;
+        } else {
+            const finalAmountOut = getAmountOutSimple(remainingAmountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut);
+            amountOut += finalAmountOut;
+            remainingAmountIn = 0n;
+        }
+    }
+
+    return amountOut;
+}
+
+function getAmountOutSimple(amountIn, sqrtPriceX96, liquidity, tokenIn, tokenOut) {
     const zeroForOne = tokenIn.toLowerCase() < tokenOut.toLowerCase();
     
     try {

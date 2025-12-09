@@ -1,5 +1,5 @@
 const { ethers, getAddress, keccak256, toUtf8Bytes, formatUnits, AbiCoder } = require('ethers');
-const { pools, updateV2Pool, updateV3Pool } = require('../core/poolState');
+const { pools, updateV2Pool, updateV3Pool, reconcilePools } = require('../core/poolState');
 const { bn, expand, div, mul, sub } = require('../utils/bigints');
 const { getPriceFromV2 } = require('../core/v2');
 const { getPriceFromV3 } = require('../core/v3');
@@ -14,6 +14,7 @@ const SWAP_EVENT_TOPIC_V2 = keccak256(toUtf8Bytes("Sync(uint112,uint112)"));
 const SWAP_EVENT_TOPIC_V3 = keccak256(toUtf8Bytes("Swap(address,address,int256,int256,uint160,uint128,int24)"));
 
 let isScanning = false;
+let isTrading = false;
 
 // --- Helper Functions ---
 
@@ -83,11 +84,11 @@ function getBestLoanAmount(price1, price2, loanTokenSymbol, intermediateTokenSym
         try {
             const amountOut1 = (price1.type === 'V2')
                 ? getV2AmountOut(loanAmount, price1.reserve1, price1.reserve0)
-                : getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
+                : getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, price1.tickSpacing, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
 
             const finalAmountOut = (price2.type === 'V2')
                 ? getV2AmountOut(amountOut1, price2.reserve0, price2.reserve1)
-                : getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
+                : getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, price2.tickSpacing, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
 
             const grossProfit = sub(finalAmountOut, loanAmount);
 
@@ -106,6 +107,18 @@ function getBestLoanAmount(price1, price2, loanTokenSymbol, intermediateTokenSym
 
 // --- Main Arbitrage Logic ---
 
+async function findAndExecuteOpportunity(loanTokenSymbol, findMultiHop = false) {
+    if (isTrading) return;
+
+    if (findMultiHop) {
+        await findBestMultiHopOpportunity(loanTokenSymbol);
+    } else {
+        for (const pairKey of Object.keys(pools)) {
+            await calculateAndExecuteOpportunities(pairKey);
+        }
+    }
+}
+
 function getPrices(pairKey) {
     const pool = pools[pairKey];
     if (!pool || !pool.dexes) return [];
@@ -123,9 +136,9 @@ function getPrices(pairKey) {
             for (const fee in dexData.fees) {
                 const feeData = dexData.fees[fee];
                 if (!feeData.sqrtPriceX96 || !feeData.liquidity) continue;
-                const price = getPriceFromV3(feeData.sqrtPriceX96);
+                const price = getPriceFromV3(feeData.sqrtPriceX96, pool.token0, pool.token1);
                 if (price === 0n) continue;
-                prices.push({ dex, fee, price, type: 'V3', liquidity: feeData.liquidity, sqrtPriceX96: feeData.sqrtPriceX96 });
+                prices.push({ dex, fee, price, type: 'V3', liquidity: feeData.liquidity, sqrtPriceX96: feeData.sqrtPriceX96, tickSpacing: feeData.tickSpacing });
             }
         }
     }
@@ -164,13 +177,13 @@ async function findBestMultiHopOpportunity(loanTokenSymbol) {
                             if (price1.type === 'V2') {
                                 amountOut1 = getV2AmountOut(loanAmount, price1.reserve1, price1.reserve0);
                             } else {
-                                amountOut1 = getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
+                                amountOut1 = getV3AmountOut(loanAmount, price1.sqrtPriceX96, price1.liquidity, loanTokenAddress, intermediateTokenAddress, price1.tickSpacing, TOKEN_DECIMALS.base[loanTokenSymbol], TOKEN_DECIMALS.base[intermediateTokenSymbol]);
                             }
 
                             if (price2.type === 'V2') {
                                 finalAmountOut = getV2AmountOut(amountOut1, price2.reserve0, price2.reserve1);
                             } else {
-                                finalAmountOut = getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
+                                finalAmountOut = getV3AmountOut(amountOut1, price2.sqrtPriceX96, price2.liquidity, intermediateTokenAddress, loanTokenAddress, price2.tickSpacing, TOKEN_DECIMALS.base[intermediateTokenSymbol], TOKEN_DECIMALS.base[loanTokenSymbol]);
                             }
                         } catch (e) {
                             continue;
@@ -252,8 +265,12 @@ MULTI-HOP OPPORTUNITY DETECTED
   Net Profit:     ${formatUnits(netProfit, decimals)} ${loanTokenSymbol} (~${profitPercentage}%)
 ################################################################################
 `);
-
+                            isTrading = true;
                             await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, decimals) });
+                            console.log(`[COOLDOWN] Waiting for ${BOT_CONFIG.POST_TRADE_COOLDOWN / 1000} seconds before resuming scanning...`);
+                            await new Promise(resolve => setTimeout(resolve, BOT_CONFIG.POST_TRADE_COOLDOWN));
+                            isTrading = false;
+                            return; // Exit after finding and executing one opportunity
                         }
                     }
                 }
@@ -286,13 +303,13 @@ async function calculateAndExecuteOpportunities(pairKey) {
         if (bestBuy.type === 'V2') {
             amountOutFromBuy = getV2AmountOut(loanAmount, bestBuy.reserve1, bestBuy.reserve0);
         } else {
-            amountOutFromBuy = getV3AmountOut(loanAmount, bestBuy.sqrtPriceX96, bestBuy.liquidity, pool.token1, pool.token0, pool.decimals1, pool.decimals0);
+            amountOutFromBuy = getV3AmountOut(loanAmount, bestBuy.sqrtPriceX96, bestBuy.liquidity, pool.token1, pool.token0, bestBuy.tickSpacing, pool.decimals1, pool.decimals0);
         }
 
         if (bestSell.type === 'V2') {
             amountOutFromSell = getV2AmountOut(amountOutFromBuy, bestSell.reserve0, bestSell.reserve1);
         } else {
-            amountOutFromSell = getV3AmountOut(amountOutFromBuy, bestSell.sqrtPriceX96, bestSell.liquidity, pool.token0, pool.token1, pool.decimals0, pool.decimals1);
+            amountOutFromSell = getV3AmountOut(amountOutFromBuy, bestSell.sqrtPriceX96, bestSell.liquidity, pool.token0, pool.token1, bestSell.tickSpacing, pool.decimals0, pool.decimals1);
         }
     } catch (e) {
         return;
@@ -375,11 +392,16 @@ OPPORTUNITY DETECTED on ${pairKey}
 ################################################################################
 `);
 
+        isTrading = true;
         await executeArbitrage(loanTokenSymbol, loanAmount, swapPath, swapsV2, swapsV3, { path: opportunityPath, profit: formatUnits(netProfit, decimals) });
+        console.log(`[COOLDOWN] Waiting for ${BOT_CONFIG.POST_TRADE_COOLDOWN / 1000} seconds before resuming scanning...`);
+        await new Promise(resolve => setTimeout(resolve, BOT_CONFIG.POST_TRADE_COOLDOWN));
+        isTrading = false;
     }
 }
 
 async function handleSwap(log) {
+    if (isTrading) return;
     const poolAddress = getAddress(log.address);
 
     for (const pairKey of Object.keys(pools)) {
@@ -389,54 +411,25 @@ async function handleSwap(log) {
         for (const dex of Object.keys(pool.dexes)) {
             const dexData = pool.dexes[dex];
             if (dexData.type === 'V2' && getAddress(dexData.address) === poolAddress) {
-                await updateV2Pool(pairKey, dex, log);
+                updateV2Pool(pairKey, dex, log);
                 updated = true;
-                break;
+                break; // Found the V2 pool, no need to check other DEXs for this pair
             } else if (dexData.type === 'V3') {
                 for (const fee in dexData.fees) {
                     if (getAddress(dexData.fees[fee].address) === poolAddress) {
-                        await updateV3Pool(pairKey, dex, fee, log);
+                        updateV3Pool(pairKey, dex, fee, log);
                         updated = true;
-                        break;
+                        break; // Found the V3 fee tier, no need to check other fees for this DEX
                     }
                 }
             }
-            if (updated) break;
+            if (updated) break; // Found the DEX, no need to check other DEXs for this pair
         }
 
         if (updated) {
             await calculateAndExecuteOpportunities(pairKey);
-            break;
+            break; // Found the pair, no need to check other pairs
         } 
-    }
-}
-
-async function reconcilePools() {
-    const promises = [];
-    console.log("[RECONCILIATION] Reconciling all pools (V2 & V3)...");
-    for (const pairKey of Object.keys(pools)) {
-        const pool = pools[pairKey];
-        for (const dex of Object.keys(pool.dexes)) {
-            const dexData = pool.dexes[dex];
-            if (dexData.type === 'V2') {
-                promises.push(updateV2Pool(pairKey, dex));
-            } else if (dexData.type === 'V3') {
-                for (const fee in dexData.fees) {
-                    promises.push(updateV3Pool(pairKey, dex, fee));
-                }
-            }
-        }
-    }
-    
-    const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Reconciliation timeout')), BOT_CONFIG.RECONCILIATION_TIMEOUT)
-    );
-
-    try {
-        await Promise.race([Promise.all(promises), timeoutPromise]);
-        console.log("[RECONCILIATION] Reconciliation complete.");
-    } catch (error) {
-        console.error("[RECONCILIATION] Reconciliation failed or timed out:", error.message);
     }
 }
 
@@ -446,13 +439,14 @@ function listenToEvents() {
     console.log("Starting hybrid event detection...");
 
     provider.on({ topics: [[SWAP_EVENT_TOPIC_V2, SWAP_EVENT_TOPIC_V3]] }, (log) => {
-        if (isScanning) return;
+        if (isScanning || isTrading) return;
         handleSwap(log).catch(err => {
             console.error(`[FAST PATH] Error processing swap event:`, err);
         });
     });
 
     provider.on('block', async (blockNumber) => {
+        if (isTrading) return;
         const startTime = Date.now();
         try {
             isScanning = true;
@@ -464,14 +458,11 @@ function listenToEvents() {
             await reconcilePools();
 
             console.log('\n[RECONCILIATION] Checking for single-pair opportunities...');
-            for (const pairKey of Object.keys(pools)) {
-                await calculateAndExecuteOpportunities(pairKey);
-            }
-            console.log('[RECONCILIATION] Finished checking for single-pair opportunities.');
+            await findAndExecuteOpportunity(null, false);
 
             console.log('\n[RECONCILIATION] Checking for multi-hop opportunities...');
             for (const loanTokenSymbol of Object.keys(LOAN_TOKENS)) {
-                await findBestMultiHopOpportunity(loanTokenSymbol);
+                await findAndExecuteOpportunity(loanTokenSymbol, true);
             }
             console.log('[RECONCILIATION] Finished checking for multi-hop opportunities.');
 

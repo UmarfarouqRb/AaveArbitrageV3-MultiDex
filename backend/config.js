@@ -6,6 +6,7 @@ const NETWORKS = {
         chainId: 8453,
         rpcUrl: 'https://base-mainnet.infura.io/v3/', // Project ID will be appended in bot.js
         explorerUrl: 'https://basescan.org',
+        multicallAddress: '0xcA11bde05977b3631167028862bE2a173976CA11'
     }
 };
 
@@ -22,6 +23,7 @@ const ABIS = {
     IPancakeV3Router: require('./abis/pancakeV3/router.json'),
     IUniswapV3Pool: require('./abis/uniswapV3/pool.json'),
     IUniswapV3Router: require('./abis/uniswapV3/router.json'),
+    Multicall3: require('./abis/Multicall3.json')
 };
 
 // --- Token Configuration ---
@@ -142,6 +144,7 @@ const BOT_CONFIG = {
     ESTIMATED_GAS_COST_ETH: '0', // Estimated gas cost in ETH
     LOAN_PERCENTAGE: 5, // 5% of the pool's reserve
     RECONCILIATION_TIMEOUT: 30000, // 30 seconds
+    POST_TRADE_COOLDOWN: 35000, // 35 seconds
     V3_LOAN_AMOUNT_ITERATIONS: 10,
     V3_LOAN_AMOUNT_INCREMENT_BPS: 500, // 5%
 };
